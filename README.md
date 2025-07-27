@@ -350,4 +350,397 @@ co_designer = QuantizationCoDesign()
 # Search for optimal bit widths
 quantization_scheme = co_designer.search(
     model=model,
-    hardware_template="integer_
+    hardware_template="integer_datapath",
+    target_accuracy=0.95,
+    area_budget=10  # mm²
+)
+
+print("Optimal bit widths:")
+for layer, bits in quantization_scheme.items():
+    print(f"{layer}: {bits.weights}b weights, {bits.activations}b activations")
+
+# Generate matching hardware
+hardware = co_designer.generate_hardware(quantization_scheme)
+```
+
+### Operator Fusion
+
+```python
+from codesign_playground import OperatorFusion
+
+# Fuse operations for hardware efficiency
+fusion_optimizer = OperatorFusion(hardware_profile="custom_accelerator")
+
+# Analyze fusion opportunities
+fusion_graph = fusion_optimizer.analyze(model)
+print(f"Fusible patterns found: {len(fusion_graph.patterns)}")
+
+# Apply fusions
+fused_model = fusion_optimizer.apply_fusions(
+    model,
+    patterns=["conv_bn_relu", "matmul_add", "attention_block"]
+)
+
+# Generate fused kernels
+fusion_optimizer.generate_kernels(
+    output_dir="kernels/",
+    backend="cuda"  # or "metal", "vulkan", "custom"
+)
+```
+
+## 📊 Performance Analysis
+
+### Cycle-Accurate Simulation
+
+```python
+from codesign_playground import CycleAccurateSimulator
+
+# Create simulator
+simulator = CycleAccurateSimulator(
+    rtl_file="accelerator.v",
+    testbench="testbench.sv"
+)
+
+# Run simulation
+trace = simulator.run(
+    input_data=test_inputs,
+    max_cycles=1_000_000,
+    save_waveform=True
+)
+
+# Analyze performance
+analyzer = trace.analyze()
+print(f"Cycles: {analyzer.total_cycles}")
+print(f"Utilization: {analyzer.compute_utilization:.1%}")
+print(f"Memory stalls: {analyzer.memory_stall_cycles}")
+
+# Generate detailed report
+analyzer.generate_report("performance_report.html")
+```
+
+### Power Analysis
+
+```python
+from codesign_playground import PowerAnalyzer
+
+# Setup power analysis
+power = PowerAnalyzer(
+    design="accelerator.v",
+    technology="tsmc_28nm",  # or "sky130"
+    activity_file="simulation.vcd"
+)
+
+# Run power analysis
+power_report = power.analyze(
+    frequency_mhz=200,
+    voltage=0.9,
+    temperature=25
+)
+
+print(f"Dynamic power: {power_report.dynamic_mw} mW")
+print(f"Static power: {power_report.static_mw} mW")
+print(f"Peak power: {power_report.peak_mw} mW")
+
+# Power optimization suggestions
+suggestions = power.suggest_optimizations()
+for opt in suggestions:
+    print(f"- {opt.description}: save {opt.power_savings_mw} mW")
+```
+
+### Area Estimation
+
+```python
+from codesign_playground import AreaEstimator
+
+# Estimate chip area
+area = AreaEstimator(technology="sky130")
+
+area_report = area.estimate(
+    design="accelerator.v",
+    target_frequency=200  # MHz
+)
+
+print(f"Total area: {area_report.total_mm2:.2f} mm²")
+print(f"Logic: {area_report.logic_mm2:.2f} mm²")
+print(f"Memory: {area_report.memory_mm2:.2f} mm²")
+print(f"IO: {area_report.io_mm2:.2f} mm²")
+
+# Floorplan visualization
+area.visualize_floorplan("floorplan.svg")
+```
+
+## 🏭 Tape-out Ready
+
+### ASIC Flow
+
+```python
+from codesign_playground import ASICFlow
+
+# Setup for Sky130 PDK
+flow = ASICFlow(
+    pdk="sky130",
+    design="accelerator"
+)
+
+# Run synthesis
+synthesis_report = flow.synthesize(
+    constraints={
+        "clock_period": 5.0,  # ns
+        "max_area": 1000000  # μm²
+    }
+)
+
+# Place and route
+pnr_report = flow.place_and_route(
+    utilization=0.7,
+    aspect_ratio=1.0
+)
+
+# Generate final GDS
+flow.generate_gds(
+    output="accelerator.gds",
+    include_fill=True
+)
+
+# Run DRC and LVS checks
+checks = flow.run_checks()
+print(f"DRC violations: {checks.drc_violations}")
+print(f"LVS status: {'PASS' if checks.lvs_clean else 'FAIL'}")
+```
+
+### FPGA Flow
+
+```python
+from codesign_playground import FPGAFlow
+
+# Target specific FPGA
+flow = FPGAFlow(
+    device="xilinx_vcu118",  # or "intel_stratix10"
+    design="accelerator"
+)
+
+# Run implementation
+impl_report = flow.implement(
+    optimization_goal="performance",  # or "area", "power"
+    timing_constraints="constraints.xdc"
+)
+
+print(f"Max frequency: {impl_report.fmax} MHz")
+print(f"Resource usage: {impl_report.utilization}%")
+
+# Generate bitstream
+bitstream = flow.generate_bitstream()
+
+# Program FPGA (if connected)
+flow.program_device(bitstream)
+```
+
+### Emulation Platform
+
+```python
+from codesign_playground import EmulationPlatform
+
+# Setup hardware emulation
+emulator = EmulationPlatform(
+    platform="aws_f1",  # or "azure_np", "gcp_tpu"
+    design="accelerator"
+)
+
+# Deploy to cloud
+deployment = emulator.deploy(
+    instance_type="f1.2xlarge",
+    region="us-west-2"
+)
+
+# Run benchmarks
+benchmark_results = emulator.run_benchmarks(
+    workload="resnet50_imagenet",
+    duration_minutes=60
+)
+
+# Cost analysis
+cost = emulator.analyze_cost(benchmark_results)
+print(f"Performance: {benchmark_results.throughput} img/s")
+print(f"Cost per million inferences: ${cost.per_million:.2f}")
+```
+
+## 💡 Examples
+
+### End-to-End: Vision Accelerator
+
+```python
+from codesign_playground import Project
+
+# Create new project
+project = Project("vision_accelerator")
+
+# Import pre-trained model
+project.import_model("efficientnet_b0.onnx")
+
+# Profile on different datasets
+profile = project.profile_workload([
+    "imagenet_224x224",
+    "coco_640x640",
+    "custom_1920x1080"
+])
+
+# Design accelerator based on profile
+accelerator = project.design_accelerator(
+    target_fps=60,
+    target_power=10,  # Watts
+    optimization="balanced"
+)
+
+# Iterate on design
+for iteration in range(5):
+    # Simulate performance
+    perf = project.simulate(accelerator)
+    
+    # Check if targets met
+    if perf.meets_requirements():
+        break
+        
+    # Refine design
+    accelerator = project.refine_design(
+        accelerator,
+        bottleneck=perf.bottleneck
+    )
+
+# Generate final deliverables
+project.generate_deliverables(
+    include_rtl=True,
+    include_drivers=True,
+    include_compiler=True,
+    include_sdk=True
+)
+```
+
+### Research: Novel Dataflow
+
+```python
+from codesign_playground import ResearchTools
+
+# Define custom dataflow
+class SpatialTemporalDataflow:
+    def __init__(self, spatial_dims, temporal_steps):
+        self.spatial = spatial_dims
+        self.temporal = temporal_steps
+    
+    def map_computation(self, layer):
+        # Custom mapping algorithm
+        pass
+
+# Evaluate against baselines
+evaluator = ResearchTools.DataflowEvaluator()
+
+results = evaluator.compare([
+    SpatialTemporalDataflow(16, 4),
+    "weight_stationary",
+    "output_stationary",
+    "row_stationary"
+])
+
+# Generate paper-ready plots
+evaluator.generate_figures(
+    results,
+    output_dir="figures/",
+    style="ieee"  # or "acm", "neurips"
+)
+```
+
+## 📚 API Reference
+
+### Core Classes
+
+```python
+class AcceleratorDesigner:
+    def profile_model(model, input_shape) -> ModelProfile
+    def design(compute_units, memory_hierarchy, dataflow) -> Accelerator
+    def optimize(accelerator, objectives) -> Accelerator
+
+class ModelOptimizer:
+    def co_optimize(target_fps, power_budget) -> Tuple[Model, Accelerator]
+    def apply_hardware_constraints(model, constraints) -> Model
+
+class PerformanceSimulator:
+    def run(design, workload) -> SimulationResults
+    def profile_bottlenecks() -> BottleneckAnalysis
+```
+
+### Workflow API
+
+```python
+class Workflow:
+    def import_model(path, input_shapes) -> None
+    def map_to_hardware(template, **params) -> None
+    def compile(optimizer, target, optimizations) -> None
+    def simulate(testbench, **params) -> Metrics
+    def generate_rtl(output_dir, **options) -> None
+```
+
+### Analysis Tools
+
+```python
+class PowerAnalyzer:
+    def analyze(frequency_mhz, voltage, temperature) -> PowerReport
+    def suggest_optimizations() -> List[Optimization]
+
+class AreaEstimator:
+    def estimate(design, target_frequency) -> AreaReport
+    def visualize_floorplan(output_path) -> None
+```
+
+## 🤝 Contributing
+
+We welcome contributions! Priority areas:
+- New hardware templates
+- Backend integrations (FPGA vendors, PDKs)
+- Performance models
+- Optimization algorithms
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Development Setup
+
+```bash
+# Clone with submodules
+git clone --recursive https://github.com/your-org/ai-hardware-codesign-playground
+cd ai-hardware-codesign-playground
+
+# Setup development environment
+./scripts/setup_dev.sh
+
+# Run tests
+pytest tests/
+make test-rtl  # Requires Verilator
+
+# Build documentation
+mkdocs build
+```
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## 🔗 Related Projects
+
+- [TVM](https://tvm.apache.org/) - Tensor compiler stack
+- [MLIR](https://mlir.llvm.org/) - Multi-level IR
+- [OpenROAD](https://theopenroadproject.org/) - Open-source ASIC tools
+- [LiteX](https://github.com/enjoy-digital/litex) - SoC builder
+- [Chipyard](https://chipyard.readthedocs.io/) - RISC-V SoC framework
+
+## 📞 Support
+
+- 📧 Email: codesign@your-org.com
+- 💬 Discord: [Join our community](https://discord.gg/your-org)
+- 📖 Documentation: [Full docs](https://docs.your-org.com/codesign)
+- 🎓 Course: [AI Hardware Design](https://learn.your-org.com/ai-hardware)
+- 📺 YouTube: [Video tutorials](https://youtube.com/@your-org)
+
+## 📚 References
+
+- [Hardware/Software Co-Design](https://arxiv.org/abs/2010.11840) - Survey paper
+- [Gemmini](https://github.com/ucb-bar/gemmini) - Berkeley accelerator generator
+- [VTA](https://tvm.apache.org/docs/topic/vta) - Versatile tensor accelerator
+- [NVDLA](http://nvdla.org/) - NVIDIA deep learning accelerator
