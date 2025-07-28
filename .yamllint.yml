@@ -1,0 +1,79 @@
+# yamllint configuration file
+# See https://yamllint.readthedocs.io/en/stable/configuration.html
+
+rules:
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+    min-spaces-inside-empty: 0
+    max-spaces-inside-empty: 0
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 0
+    min-spaces-inside-empty: 0
+    max-spaces-inside-empty: 0
+  colons:
+    max-spaces-before: 0
+    min-spaces-after: 1
+    max-spaces-after: 1
+  commas:
+    max-spaces-before: 0
+    min-spaces-after: 1
+    max-spaces-after: 1
+  comments:
+    min-spaces-from-content: 2
+    require-starting-space: true
+  comments-indentation: {}
+  document-end: disable
+  document-start:
+    present: false
+  empty-lines:
+    max: 3
+    max-start: 0
+    max-end: 1
+  empty-values:
+    forbid-in-block-mappings: false
+    forbid-in-flow-mappings: true
+  float-values:
+    require-numeral-before-decimal: false
+    forbid-scientific-notation: false
+    forbid-nan: false
+    forbid-inf: false
+  hyphens:
+    max-spaces-after: 1
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+  key-duplicates: {}
+  key-ordering: disable
+  line-length:
+    max: 120
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+  new-line-at-end-of-file: {}
+  octal-values:
+    forbid-implicit-octal: false
+    forbid-explicit-octal: false
+  quoted-strings:
+    quote-type: any
+    required: false
+    check-keys: false
+  trailing-spaces: {}
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']
+    check-keys: true
+
+# Extend the default configuration
+extend: default
+
+# Ignore certain files
+ignore: |
+  .github/workflows/
+  node_modules/
+  .venv/
+  venv/
+  dist/
+  build/
+  *.min.yml
+  *.min.yaml
