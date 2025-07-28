@@ -1,0 +1,352 @@
+# Development Docker Compose Configuration
+# AI Hardware Co-Design Playground
+
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Development Web Application
+  # ============================================================================
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: codesign-dev-web
+    ports:
+      - "8000:8000"
+      - "8888:8888"  # Jupyter Lab
+      - "6006:6006"  # TensorBoard
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql://codesign_user:dev_password@db:5432/codesign_dev
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - RUN_MIGRATIONS=true
+      - LOG_LEVEL=DEBUG
+      - SECRET_KEY=dev_secret_key_not_for_production
+      - JWT_SECRET_KEY=dev_jwt_secret_key_not_for_production
+      - PYTHONPATH=/app/backend
+      - SKIP_AUTH_IN_DEV=true
+      - MOCK_EXTERNAL_SERVICES=true
+    depends_on:
+      - db
+      - redis
+    volumes:
+      # Mount source code for hot reloading
+      - ./backend:/app/backend:rw
+      - ./frontend:/app/frontend:rw
+      - ./tests:/app/tests:rw
+      - ./docs:/app/docs:rw
+      - ./scripts:/app/scripts:rw
+      - ./notebooks:/app/notebooks:rw
+      # Persistent volumes
+      - dev_data:/app/data
+      - dev_logs:/app/logs
+      - dev_uploads:/app/uploads
+      - dev_artifacts:/app/artifacts
+      # Jupyter notebooks
+      - jupyter_data:/home/codesign/.jupyter
+    networks:
+      - codesign_dev_network
+    command: >
+      bash -c "
+        echo 'Starting development environment...'
+        # Install development dependencies
+        pip install -e .[dev]
+        # Start Jupyter Lab in background
+        nohup jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' &
+        # Start the web server with hot reloading
+        uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    stdin_open: true
+    tty: true
+
+  # ============================================================================
+  # Development Worker (Optional)
+  # ============================================================================
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: codesign-dev-worker
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql://codesign_user:dev_password@db:5432/codesign_dev
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=DEBUG
+      - SECRET_KEY=dev_secret_key_not_for_production
+      - PYTHONPATH=/app/backend
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app/backend:rw
+      - dev_data:/app/data
+      - dev_logs:/app/logs
+    networks:
+      - codesign_dev_network
+    command: >
+      bash -c "
+        echo 'Starting development worker...'
+        pip install -e .[dev]
+        celery -A backend.worker worker --loglevel=debug --reload
+      "
+
+  # ============================================================================
+  # Frontend Development Server
+  # ============================================================================
+  frontend:
+    image: node:18-alpine
+    container_name: codesign-dev-frontend
+    working_dir: /app
+    ports:
+      - "3000:3000"
+      - "3001:3001"  # Storybook
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app:rw
+      - frontend_node_modules:/app/node_modules
+    networks:
+      - codesign_dev_network
+    command: >
+      sh -c "
+        echo 'Installing frontend dependencies...'
+        npm install
+        echo 'Starting frontend development server...'
+        npm run dev
+      "
+    stdin_open: true
+    tty: true
+
+  # ============================================================================
+  # Development Database
+  # ============================================================================
+  db:
+    image: postgres:15-alpine
+    container_name: codesign-dev-db
+    environment:
+      - POSTGRES_DB=codesign_dev
+      - POSTGRES_USER=codesign_user
+      - POSTGRES_PASSWORD=dev_password
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./scripts/init_dev_db.sql:/docker-entrypoint-initdb.d/init_dev_db.sql:ro
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    networks:
+      - codesign_dev_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codesign_user -d codesign_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Development Redis
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: codesign-dev-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    networks:
+      - codesign_dev_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================================================
+  # Development Testing Environment
+  # ============================================================================
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: codesign-test
+    environment:
+      - ENVIRONMENT=test
+      - DATABASE_URL=postgresql://codesign_user:test_password@test_db:5432/codesign_test
+      - REDIS_URL=redis://test_redis:6379/0
+      - LOG_LEVEL=WARNING
+      - PYTHONPATH=/app/backend
+    depends_on:
+      - test_db
+      - test_redis
+    volumes:
+      - ./backend:/app/backend:rw
+      - ./tests:/app/tests:rw
+      - test_coverage:/app/htmlcov
+    networks:
+      - codesign_test_network
+    profiles:
+      - testing
+
+  # ============================================================================
+  # Test Database
+  # ============================================================================
+  test_db:
+    image: postgres:15-alpine
+    container_name: codesign-test-db
+    environment:
+      - POSTGRES_DB=codesign_test
+      - POSTGRES_USER=codesign_user
+      - POSTGRES_PASSWORD=test_password
+    tmpfs:
+      - /var/lib/postgresql/data  # Use tmpfs for faster tests
+    networks:
+      - codesign_test_network
+    profiles:
+      - testing
+
+  # ============================================================================
+  # Test Redis
+  # ============================================================================
+  test_redis:
+    image: redis:7-alpine
+    container_name: codesign-test-redis
+    command: redis-server --save ""
+    tmpfs:
+      - /data  # Use tmpfs for faster tests
+    networks:
+      - codesign_test_network
+    profiles:
+      - testing
+
+  # ============================================================================
+  # Documentation Server
+  # ============================================================================
+  docs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: docs
+    container_name: codesign-docs
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docs:/app/docs:rw
+      - ./backend/src:/app/backend/src:ro
+    networks:
+      - codesign_dev_network
+    profiles:
+      - docs
+
+  # ============================================================================
+  # pgAdmin for Database Management
+  # ============================================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: codesign-pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@codesign.local
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - codesign_dev_network
+    profiles:
+      - tools
+
+  # ============================================================================
+  # Redis Commander for Redis Management
+  # ============================================================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: codesign-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    networks:
+      - codesign_dev_network
+    profiles:
+      - tools
+
+  # ============================================================================
+  # MailHog for Email Testing
+  # ============================================================================
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: codesign-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - codesign_dev_network
+    profiles:
+      - tools
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  codesign_dev_network:
+    driver: bridge
+  codesign_test_network:
+    driver: bridge
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+  dev_data:
+    driver: local
+  dev_logs:
+    driver: local
+  dev_uploads:
+    driver: local
+  dev_artifacts:
+    driver: local
+  jupyter_data:
+    driver: local
+  frontend_node_modules:
+    driver: local
+  test_coverage:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+# ============================================================================
+# Usage Examples
+# ============================================================================
+# Start development environment:
+#   docker-compose -f docker-compose.dev.yml up
+#
+# Start with specific services:
+#   docker-compose -f docker-compose.dev.yml up web frontend db redis
+#
+# Run tests:
+#   docker-compose -f docker-compose.dev.yml --profile testing up test
+#
+# Start with tools:
+#   docker-compose -f docker-compose.dev.yml --profile tools up
+#
+# Build and start documentation:
+#   docker-compose -f docker-compose.dev.yml --profile docs up docs
+#
+# Clean up:
+#   docker-compose -f docker-compose.dev.yml down -v

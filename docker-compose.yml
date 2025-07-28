@@ -1,0 +1,267 @@
+# Production Docker Compose Configuration
+# AI Hardware Co-Design Playground
+
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Web Application
+  # ============================================================================
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: codesign-web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://codesign_user:${POSTGRES_PASSWORD}@db:5432/codesign_playground
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - RUN_MIGRATIONS=true
+      - LOG_LEVEL=INFO
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - app_data:/app/data
+      - app_logs:/app/logs
+      - app_uploads:/app/uploads
+      - app_artifacts:/app/artifacts
+    networks:
+      - codesign_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.codesign.rule=Host(`codesign.local`)"
+      - "traefik.http.routers.codesign.tls=true"
+      - "traefik.http.services.codesign.loadbalancer.server.port=8000"
+
+  # ============================================================================
+  # Celery Worker
+  # ============================================================================
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: codesign-worker
+    restart: unless-stopped
+    command: ["worker"]
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://codesign_user:${POSTGRES_PASSWORD}@db:5432/codesign_playground
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=INFO
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - app_data:/app/data
+      - app_logs:/app/logs
+      - app_uploads:/app/uploads
+      - app_artifacts:/app/artifacts
+    networks:
+      - codesign_network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+        reservations:
+          memory: 1G
+          cpus: "0.5"
+
+  # ============================================================================
+  # Celery Beat Scheduler
+  # ============================================================================
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: codesign-scheduler
+    restart: unless-stopped
+    command: ["scheduler"]
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql://codesign_user:${POSTGRES_PASSWORD}@db:5432/codesign_playground
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=INFO
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - app_data:/app/data
+      - app_logs:/app/logs
+    networks:
+      - codesign_network
+
+  # ============================================================================
+  # PostgreSQL Database
+  # ============================================================================
+  db:
+    image: postgres:15-alpine
+    container_name: codesign-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=codesign_playground
+      - POSTGRES_USER=codesign_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    networks:
+      - codesign_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codesign_user -d codesign_playground"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"  # Expose for external connections (remove in production)
+
+  # ============================================================================
+  # Redis Cache & Message Broker
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: codesign-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - codesign_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    ports:
+      - "6379:6379"  # Expose for external connections (remove in production)
+
+  # ============================================================================
+  # Nginx Reverse Proxy (Optional)
+  # ============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: codesign-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - web
+    networks:
+      - codesign_network
+    labels:
+      - "traefik.enable=false"
+
+  # ============================================================================
+  # Monitoring - Prometheus
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: codesign-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - codesign_network
+
+  # ============================================================================
+  # Monitoring - Grafana
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: codesign-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - codesign_network
+    depends_on:
+      - prometheus
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  codesign_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_data:
+    driver: local
+  app_logs:
+    driver: local
+  app_uploads:
+    driver: local
+  app_artifacts:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  nginx_logs:
+    driver: local
+
+# ============================================================================
+# Configuration
+# ============================================================================
+# Environment variables should be defined in .env file:
+# POSTGRES_PASSWORD=secure_password
+# SECRET_KEY=your_secret_key_here
+# JWT_SECRET_KEY=your_jwt_secret_key_here
+# GRAFANA_PASSWORD=grafana_admin_password
