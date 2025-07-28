@@ -1,0 +1,252 @@
+# Code Owners for AI Hardware Co-Design Playground
+# This file defines individuals or teams responsible for code review
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ============================================================================
+# Global Owners
+# ============================================================================
+# These users are the default owners for everything in the repo
+# Unless a later match takes precedence
+* @danieleschmidt @terragon-labs/core-team
+
+# ============================================================================
+# Documentation
+# ============================================================================
+# Documentation requires review from docs team and technical leads
+*.md @terragon-labs/docs-team @danieleschmidt
+/docs/ @terragon-labs/docs-team @terragon-labs/core-team
+/README.md @danieleschmidt @terragon-labs/core-team
+/CONTRIBUTING.md @terragon-labs/community-team @danieleschmidt
+/CODE_OF_CONDUCT.md @terragon-labs/community-team @danieleschmidt
+/SECURITY.md @terragon-labs/security-team @danieleschmidt
+
+# ============================================================================
+# Backend / Python Code
+# ============================================================================
+# Backend code requires review from backend team
+/backend/ @terragon-labs/backend-team @danieleschmidt
+/backend/src/core/ @terragon-labs/backend-team @terragon-labs/architecture-team
+/backend/src/hardware/ @terragon-labs/hardware-team @terragon-labs/backend-team
+/backend/src/optimization/ @terragon-labs/ml-team @terragon-labs/backend-team
+/backend/src/simulation/ @terragon-labs/hardware-team @terragon-labs/backend-team
+/backend/src/api/ @terragon-labs/backend-team @terragon-labs/api-team
+
+# Python configuration files
+pyproject.toml @terragon-labs/backend-team @danieleschmidt
+requirements*.txt @terragon-labs/backend-team @danieleschmidt
+
+# ============================================================================
+# Frontend / JavaScript Code
+# ============================================================================
+# Frontend code requires review from frontend team
+/frontend/ @terragon-labs/frontend-team @danieleschmidt
+/frontend/src/components/ @terragon-labs/frontend-team @terragon-labs/design-team
+/frontend/src/pages/ @terragon-labs/frontend-team
+/frontend/src/hooks/ @terragon-labs/frontend-team
+/frontend/src/utils/ @terragon-labs/frontend-team @terragon-labs/backend-team
+
+# Node.js configuration files
+package.json @terragon-labs/frontend-team @danieleschmidt
+package-lock.json @terragon-labs/frontend-team
+tsconfig.json @terragon-labs/frontend-team
+.eslintrc.* @terragon-labs/frontend-team
+.prettierrc* @terragon-labs/frontend-team
+
+# ============================================================================
+# Testing
+# ============================================================================
+# Test files require review from relevant teams plus QA
+/tests/ @terragon-labs/qa-team @terragon-labs/backend-team
+/tests/unit/ @terragon-labs/qa-team @terragon-labs/backend-team
+/tests/integration/ @terragon-labs/qa-team @terragon-labs/backend-team @terragon-labs/devops-team
+/tests/e2e/ @terragon-labs/qa-team @terragon-labs/frontend-team @terragon-labs/backend-team
+/tests/performance/ @terragon-labs/qa-team @terragon-labs/performance-team
+/tests/fixtures/ @terragon-labs/qa-team @terragon-labs/ml-team
+
+# Testing configuration
+conftest.py @terragon-labs/qa-team @terragon-labs/backend-team
+pytest.ini @terragon-labs/qa-team @terragon-labs/backend-team
+.pytest_cache/ @terragon-labs/qa-team
+
+# ============================================================================
+# Infrastructure & DevOps
+# ============================================================================
+# Infrastructure code requires DevOps team review
+Dockerfile* @terragon-labs/devops-team @danieleschmidt
+docker-compose*.yml @terragon-labs/devops-team @danieleschmidt
+.dockerignore @terragon-labs/devops-team
+Makefile @terragon-labs/devops-team @danieleschmidt
+
+# Kubernetes and deployment configs
+/k8s/ @terragon-labs/devops-team @terragon-labs/sre-team
+/helm/ @terragon-labs/devops-team @terragon-labs/sre-team
+/terraform/ @terragon-labs/devops-team @terragon-labs/infrastructure-team
+/ansible/ @terragon-labs/devops-team @terragon-labs/infrastructure-team
+
+# CI/CD workflows
+/.github/ @terragon-labs/devops-team @danieleschmidt
+/.github/workflows/ @terragon-labs/devops-team @terragon-labs/sre-team
+/docs/workflows/ @terragon-labs/devops-team @terragon-labs/docs-team
+
+# ============================================================================
+# Development Environment
+# ============================================================================
+# Development environment configs require DevOps review
+.devcontainer/ @terragon-labs/devops-team @danieleschmidt
+.vscode/ @terragon-labs/devops-team @terragon-labs/frontend-team
+.env.example @terragon-labs/devops-team @terragon-labs/security-team
+
+# ============================================================================
+# Security & Compliance
+# ============================================================================
+# Security-related files require security team review
+SECURITY.md @terragon-labs/security-team @danieleschmidt
+/.github/dependabot.yml @terragon-labs/security-team @terragon-labs/devops-team
+/.github/security.yml @terragon-labs/security-team
+.pre-commit-config.yaml @terragon-labs/security-team @terragon-labs/devops-team
+
+# License and legal
+LICENSE* @danieleschmidt @terragon-labs/legal-team
+CODEOWNERS @danieleschmidt @terragon-labs/core-team
+
+# ============================================================================
+# Code Quality & Linting
+# ============================================================================
+# Code quality configs require review from relevant teams
+.editorconfig @terragon-labs/devops-team @terragon-labs/frontend-team
+.gitignore @terragon-labs/devops-team @danieleschmidt
+.gitattributes @terragon-labs/devops-team
+
+# Python linting and formatting
+.black @terragon-labs/backend-team
+.isort.cfg @terragon-labs/backend-team
+.flake8 @terragon-labs/backend-team
+.pylintrc @terragon-labs/backend-team
+.mypy.ini @terragon-labs/backend-team
+.bandit @terragon-labs/security-team @terragon-labs/backend-team
+
+# YAML and Markdown linting
+.yamllint.yml @terragon-labs/devops-team @terragon-labs/docs-team
+.markdownlint.yml @terragon-labs/docs-team
+
+# ============================================================================
+# Machine Learning & AI
+# ============================================================================
+# ML/AI specific code requires ML team review
+/backend/src/models/ @terragon-labs/ml-team @terragon-labs/research-team
+/backend/src/training/ @terragon-labs/ml-team
+/backend/src/inference/ @terragon-labs/ml-team @terragon-labs/backend-team
+/notebooks/ @terragon-labs/ml-team @terragon-labs/research-team
+/experiments/ @terragon-labs/ml-team @terragon-labs/research-team
+
+# Model files and datasets
+*.onnx @terragon-labs/ml-team
+*.pt @terragon-labs/ml-team
+*.pth @terragon-labs/ml-team
+*.h5 @terragon-labs/ml-team
+*.pkl @terragon-labs/ml-team
+
+# ============================================================================
+# Hardware Design
+# ============================================================================
+# Hardware design files require hardware team review
+/hardware/ @terragon-labs/hardware-team @terragon-labs/rtl-team
+/rtl/ @terragon-labs/rtl-team @terragon-labs/verification-team
+/fpga/ @terragon-labs/fpga-team @terragon-labs/hardware-team
+/asic/ @terragon-labs/asic-team @terragon-labs/hardware-team
+
+# Hardware description files
+*.v @terragon-labs/rtl-team @terragon-labs/verification-team
+*.sv @terragon-labs/rtl-team @terragon-labs/verification-team
+*.vhd @terragon-labs/rtl-team @terragon-labs/verification-team
+*.vhdl @terragon-labs/rtl-team @terragon-labs/verification-team
+
+# Synthesis and place & route
+*.tcl @terragon-labs/fpga-team @terragon-labs/asic-team
+*.sdc @terragon-labs/fpga-team @terragon-labs/asic-team
+*.xdc @terragon-labs/fpga-team
+
+# ============================================================================
+# Research & Publications
+# ============================================================================
+# Research code and publications require research team review
+/research/ @terragon-labs/research-team @terragon-labs/ml-team
+/papers/ @terragon-labs/research-team @terragon-labs/docs-team
+/publications/ @terragon-labs/research-team @terragon-labs/docs-team
+/benchmarks/ @terragon-labs/research-team @terragon-labs/performance-team
+
+# ============================================================================
+# External Integrations
+# ============================================================================
+# External integration configs require multiple team review
+/integrations/ @terragon-labs/integrations-team @terragon-labs/backend-team
+/connectors/ @terragon-labs/integrations-team @terragon-labs/api-team
+/webhooks/ @terragon-labs/integrations-team @terragon-labs/security-team
+
+# ============================================================================
+# Monitoring & Observability
+# ============================================================================
+# Monitoring configs require SRE team review
+/monitoring/ @terragon-labs/sre-team @terragon-labs/devops-team
+/grafana/ @terragon-labs/sre-team
+/prometheus/ @terragon-labs/sre-team
+/alerting/ @terragon-labs/sre-team @terragon-labs/oncall-team
+
+# ============================================================================
+# Database & Migrations
+# ============================================================================
+# Database changes require DBA and backend team review
+/backend/migrations/ @terragon-labs/dba-team @terragon-labs/backend-team
+/backend/alembic/ @terragon-labs/dba-team @terragon-labs/backend-team
+/database/ @terragon-labs/dba-team @terragon-labs/backend-team
+/sql/ @terragon-labs/dba-team @terragon-labs/backend-team
+
+# ============================================================================
+# Scripts & Automation
+# ============================================================================
+# Scripts require review from appropriate teams
+/scripts/ @terragon-labs/devops-team @terragon-labs/backend-team
+/scripts/deploy* @terragon-labs/devops-team @terragon-labs/sre-team
+/scripts/migrate* @terragon-labs/dba-team @terragon-labs/backend-team
+/scripts/backup* @terragon-labs/dba-team @terragon-labs/sre-team
+/scripts/security* @terragon-labs/security-team @terragon-labs/devops-team
+
+# ============================================================================
+# Configuration Files
+# ============================================================================
+# Critical config files require admin review
+.github/settings.yml @danieleschmidt @terragon-labs/admin-team
+.github/branch-protection.yml @danieleschmidt @terragon-labs/admin-team
+renovate.json @terragon-labs/devops-team @danieleschmidt
+
+# ============================================================================
+# Vendor & Third-party
+# ============================================================================
+# Vendor integrations require security and legal review
+/vendor/ @terragon-labs/security-team @terragon-labs/legal-team
+/third-party/ @terragon-labs/security-team @terragon-labs/legal-team
+LICENSE-3RD-PARTY @terragon-labs/legal-team @danieleschmidt
+
+# ============================================================================
+# Build & Release
+# ============================================================================
+# Build and release configs require release manager review
+/.github/release.yml @terragon-labs/release-team @danieleschmidt
+/release/ @terragon-labs/release-team @terragon-labs/devops-team
+/build/ @terragon-labs/build-team @terragon-labs/devops-team
+CHANGELOG.md @terragon-labs/release-team @danieleschmidt
+
+# ============================================================================
+# Emergency Overrides
+# ============================================================================
+# Critical files that need immediate attention during incidents
+# These bypass normal review requirements during emergencies
+# Usage: Include "emergency" label and @terragon-labs/incident-response
+
+# Note: The above patterns are evaluated in order, with later matches
+# taking precedence over earlier ones. More specific paths should be
+# placed after more general ones.
+
+# For questions about code ownership or to request changes to this file,
+# please create an issue with the "codeowners" label or contact
+# @danieleschmidt or @terragon-labs/admin-team
