@@ -1,0 +1,176 @@
+{
+  "name": "ai-hardware-codesign-playground",
+  "version": "0.1.0",
+  "description": "Interactive environment for co-optimizing neural networks and hardware accelerators",
+  "keywords": [
+    "ai",
+    "machine-learning",
+    "hardware-design",
+    "accelerators",
+    "rtl",
+    "fpga",
+    "asic",
+    "co-design",
+    "optimization",
+    "neural-networks"
+  ],
+  "homepage": "https://github.com/terragon-labs/ai-hardware-codesign-playground",
+  "bugs": {
+    "url": "https://github.com/terragon-labs/ai-hardware-codesign-playground/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/terragon-labs/ai-hardware-codesign-playground.git"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Terragon Labs",
+    "email": "contact@terragon-labs.com",
+    "url": "https://terragon-labs.com"
+  },
+  "maintainers": [
+    {
+      "name": "Daniel Schmidt",
+      "email": "daniel@terragon-labs.com"
+    }
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && python -m build",
+    "start": "npm run start:backend",
+    "start:backend": "cd backend && python -m uvicorn main:app --host 0.0.0.0 --port 8000",
+    "start:frontend": "cd frontend && npm run start",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cd backend && python -m pytest --cov=src --cov-report=html --cov-report=term-missing",
+    "test:frontend": "cd frontend && npm run test",
+    "test:watch": "npm run test:backend:watch",
+    "test:backend:watch": "cd backend && python -m pytest-watch",
+    "test:frontend:watch": "cd frontend && npm run test:watch",
+    "test:e2e": "cd tests/e2e && npm run test",
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "cd backend && python -m black --check . && python -m isort --check-only . && python -m pylint src/ && python -m mypy src/",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:fix": "npm run lint:fix:backend && npm run lint:fix:frontend",
+    "lint:fix:backend": "cd backend && python -m black . && python -m isort .",
+    "lint:fix:frontend": "cd frontend && npm run lint:fix",
+    "typecheck": "npm run typecheck:backend && npm run typecheck:frontend",
+    "typecheck:backend": "cd backend && python -m mypy src/",
+    "typecheck:frontend": "cd frontend && npm run typecheck",
+    "format": "npm run format:backend && npm run format:frontend",
+    "format:backend": "cd backend && python -m black . && python -m isort .",
+    "format:frontend": "cd frontend && npm run format",
+    "docs": "npm run docs:build",
+    "docs:build": "cd backend && python -m sphinx.cmd.build docs/ docs/_build/html && cd ../frontend && npm run docs:build",
+    "docs:serve": "cd backend && python -m http.server 8080 --directory docs/_build/html",
+    "docs:dev": "cd backend && python -m sphinx.cmd.build docs/ docs/_build/html -b html --watch",
+    "security": "npm run security:backend && npm run security:frontend",
+    "security:backend": "cd backend && python -m bandit -r src/ && python -m safety check",
+    "security:frontend": "cd frontend && npm audit",
+    "clean": "npm run clean:backend && npm run clean:frontend",
+    "clean:backend": "cd backend && find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && find . -type f -name '*.pyc' -delete && rm -rf .coverage htmlcov/ .pytest_cache/ dist/ build/",
+    "clean:frontend": "cd frontend && rm -rf node_modules/ dist/ build/ .next/",
+    "setup": "npm run setup:backend && npm run setup:frontend",
+    "setup:backend": "cd backend && pip install -e .[dev,test,docs]",
+    "setup:frontend": "cd frontend && npm install",
+    "docker:build": "docker build -t ai-hardware-codesign-playground .",
+    "docker:run": "docker run -p 8000:8000 -p 3000:3000 ai-hardware-codesign-playground",
+    "docker:dev": "docker-compose -f docker-compose.dev.yml up --build",
+    "docker:prod": "docker-compose -f docker-compose.yml up --build",
+    "docker:down": "docker-compose down",
+    "jupyter": "cd notebooks && jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root",
+    "storybook": "cd frontend && npm run storybook",
+    "storybook:build": "cd frontend && npm run build-storybook",
+    "coverage": "npm run test:backend && open backend/htmlcov/index.html",
+    "benchmark": "cd backend && python -m pytest benchmarks/ --benchmark-only",
+    "profile": "cd backend && python -m cProfile -o profile.stats src/main.py",
+    "migrate": "cd backend && alembic upgrade head",
+    "migrate:create": "cd backend && alembic revision --autogenerate",
+    "seed": "cd backend && python scripts/seed_database.py",
+    "deploy:staging": "gh workflow run deploy-staging.yml",
+    "deploy:production": "gh workflow run deploy-production.yml",
+    "precommit": "npm run lint && npm run test",
+    "postinstall": "husky install",
+    "version:patch": "npm version patch && git push && git push --tags",
+    "version:minor": "npm version minor && git push && git push --tags",
+    "version:major": "npm version major && git push && git push --tags",
+    "release": "semantic-release",
+    "health": "curl -f http://localhost:8000/health || exit 1",
+    "logs": "docker-compose logs -f",
+    "shell": "cd backend && python -i -c 'from src.main import app; from src.database import SessionLocal; db = SessionLocal()'",
+    "reset": "npm run clean && npm run setup",
+    "validate": "npm run lint && npm run typecheck && npm run test && npm run security"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "workspaces": [
+    "frontend",
+    "backend",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "husky": "^8.0.3",
+    "lint-staged": "^15.2.0",
+    "semantic-release": "^22.0.12",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^9.2.6",
+    "commitizen": "^4.3.0",
+    "cz-conventional-changelog": "^3.3.0",
+    "@commitlint/cli": "^18.4.4",
+    "@commitlint/config-conventional": "^18.4.4"
+  },
+  "dependencies": {},
+  "lint-staged": {
+    "backend/**/*.py": [
+      "black",
+      "isort",
+      "pylint",
+      "mypy"
+    ],
+    "frontend/**/*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "**/*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "config": {
+    "commitizen": {
+      "path": "./node_modules/cz-conventional-changelog"
+    }
+  },
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ]
+  },
+  "release": {
+    "branches": [
+      "main",
+      {
+        "name": "develop",
+        "prerelease": "beta"
+      }
+    ],
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/changelog",
+      "@semantic-release/npm",
+      "@semantic-release/github",
+      "@semantic-release/git"
+    ]
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  }
+}
