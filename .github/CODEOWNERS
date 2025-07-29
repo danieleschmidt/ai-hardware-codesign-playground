@@ -1,0 +1,110 @@
+# CODEOWNERS - AI Hardware Co-Design Playground
+# 
+# This file defines code ownership for automated reviewer assignment.
+# When a pull request is opened, the appropriate owners will be automatically
+# requested for review based on the files changed.
+#
+# Order matters: the last matching pattern has precedence.
+# 
+# Documentation: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global repository owners (fallback for unmatched files)
+* @danieleschmidt
+
+# Core project files
+README.md @danieleschmidt
+LICENSE @danieleschmidt
+PROJECT_CHARTER.md @danieleschmidt
+ARCHITECTURE.md @danieleschmidt
+
+# Documentation
+docs/ @danieleschmidt
+*.md @danieleschmidt
+
+# Configuration files
+*.json @danieleschmidt
+*.yml @danieleschmidt
+*.yaml @danieleschmidt
+*.toml @danieleschmidt
+*.ini @danieleschmidt
+*.cfg @danieleschmidt
+.editorconfig @danieleschmidt
+.gitignore @danieleschmidt
+
+# Python backend
+backend/ @danieleschmidt
+pyproject.toml @danieleschmidt
+requirements*.txt @danieleschmidt
+pytest.ini @danieleschmidt
+*.py @danieleschmidt
+
+# Frontend
+frontend/ @danieleschmidt
+package.json @danieleschmidt
+package-lock.json @danieleschmidt
+*.js @danieleschmidt
+*.jsx @danieleschmidt
+*.ts @danieleschmidt
+*.tsx @danieleschmidt
+
+# Testing
+tests/ @danieleschmidt
+**/test_*.py @danieleschmidt
+**/*_test.py @danieleschmidt
+**/*.test.js @danieleschmidt
+**/*.test.ts @danieleschmidt
+**/*.spec.js @danieleschmidt
+**/*.spec.ts @danieleschmidt
+
+# Docker and containerization
+Dockerfile* @danieleschmidt
+docker-compose*.yml @danieleschmidt
+.dockerignore @danieleschmidt
+
+# CI/CD and automation
+.github/ @danieleschmidt
+.pre-commit-config.yaml @danieleschmidt
+Makefile @danieleschmidt
+scripts/ @danieleschmidt
+
+# Security and compliance
+SECURITY.md @danieleschmidt
+.bandit @danieleschmidt
+.safety @danieleschmidt
+
+# Community and governance
+CODE_OF_CONDUCT.md @danieleschmidt
+CONTRIBUTING.md @danieleschmidt
+CHANGELOG.md @danieleschmidt
+
+# Hardware-specific files (if hardware team members are added)
+hardware/ @danieleschmidt
+# Future: hardware/ @hardware-team
+
+# Notebooks and research
+notebooks/ @danieleschmidt
+*.ipynb @danieleschmidt
+
+# Data and datasets
+data/ @danieleschmidt
+
+# Deployment and infrastructure
+*.dockerfile @danieleschmidt
+kubernetes/ @danieleschmidt
+terraform/ @danieleschmidt
+ansible/ @danieleschmidt
+
+# Performance and monitoring
+benchmarks/ @danieleschmidt
+monitoring/ @danieleschmidt
+grafana/ @danieleschmidt
+prometheus/ @danieleschmidt
+
+# Package management
+renovate.json @danieleschmidt
+.dependabot/ @danieleschmidt
+
+# IDE and editor configurations
+.vscode/ @danieleschmidt
+.idea/ @danieleschmidt
+*.code-workspace @danieleschmidt
