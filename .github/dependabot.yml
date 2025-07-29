@@ -1,4 +1,4 @@
-# Dependabot configuration for AI Hardware Co-Design Playground
+# Enhanced Dependabot configuration for AI Hardware Co-Design Playground
 # See: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 
 version: 2
@@ -57,6 +57,13 @@ updates:
           - "pylint"
           - "bandit"
           - "safety"
+      security:
+        patterns:
+          - "bandit"
+          - "safety"
+          - "cryptography"
+          - "requests"
+          - "urllib3"
 
   # Node.js dependencies
   - package-ecosystem: "npm"
@@ -96,6 +103,12 @@ updates:
           - "@testing-library/*"
           - "cypress*"
           - "vitest*"
+      security:
+        patterns:
+          - "helmet"
+          - "cors"
+          - "express-rate-limit"
+          - "express-validator"
 
   # Frontend dependencies (if frontend directory exists)
   - package-ecosystem: "npm"
@@ -131,6 +144,7 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+      - "security"
     commit-message:
       prefix: "deps(docker):"
       include: "scope"
@@ -151,6 +165,7 @@ updates:
       - "dependencies"
       - "github-actions"
       - "ci"
+      - "security"
     commit-message:
       prefix: "deps(actions):"
       include: "scope"
@@ -161,3 +176,5 @@ updates:
           - "github/*"
           - "codecov/*"
           - "docker/*"
+          - "anchore/*"
+          - "aquasecurity/*"
