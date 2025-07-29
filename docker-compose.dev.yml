@@ -1,0 +1,276 @@
+# Docker Compose for AI Hardware Co-Design Playground - Development
+version: '3.8'
+
+services:
+  # PostgreSQL Database (Development)
+  database:
+    image: postgres:15-alpine
+    container_name: codesign-db-dev
+    environment:
+      POSTGRES_DB: codesign_playground_dev
+      POSTGRES_USER: dev_user
+      POSTGRES_PASSWORD: dev_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-dev.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev_user -d codesign_playground_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - codesign-dev-network
+
+  # Redis Cache (Development)
+  redis:
+    image: redis:7-alpine
+    container_name: codesign-redis-dev
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - codesign-dev-network
+
+  # Development Backend
+  backend:
+    build:
+      context: .
+      target: development
+      args:
+        - BUILD_ENV=development
+    container_name: codesign-backend-dev
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password@database:5432/codesign_playground_dev
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=dev-secret-key
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - PYTHONPATH=/app/backend
+      - RELOAD=true
+    ports:
+      - "8001:8000"
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Hot reload for development
+      - ./backend:/app/backend
+      - ./tests:/app/tests
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./generated:/app/generated
+      # Preserve node_modules and pip cache
+      - node_modules_cache:/app/node_modules
+      - pip_cache:/root/.cache/pip
+    command: uvicorn codesign_playground.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+    networks:
+      - codesign-dev-network
+
+  # Development Frontend
+  frontend:
+    build:
+      context: .
+      target: development
+    container_name: codesign-frontend-dev
+    environment:
+      - REACT_APP_API_URL=http://localhost:8001
+      - REACT_APP_ENVIRONMENT=development
+      - CHOKIDAR_USEPOLLING=true
+      - WDS_SOCKET_HOST=localhost
+      - WDS_SOCKET_PORT=3000
+    ports:
+      - "3000:3000"
+    volumes:
+      # Hot reload for development
+      - ./frontend:/app/frontend
+      - node_modules_frontend_cache:/app/frontend/node_modules
+    command: bash -c "cd frontend && npm run dev"
+    depends_on:
+      - backend
+    networks:
+      - codesign-dev-network
+
+  # Jupyter Lab for Development
+  jupyter:
+    build:
+      context: .
+      target: jupyter
+    container_name: codesign-jupyter-dev
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=dev-token
+      - DATABASE_URL=postgresql://dev_user:dev_password@database:5432/codesign_playground_dev
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./backend:/app/backend
+      - ./data:/app/data
+      - ./examples:/app/examples
+    depends_on:
+      - database
+      - redis
+    networks:
+      - codesign-dev-network
+
+  # Hardware Simulation Environment
+  hardware-sim:
+    build:
+      context: .
+      target: hardware-simulation
+    container_name: codesign-hardware-sim-dev
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password@database:5432/codesign_playground_dev
+      - REDIS_URL=redis://redis:6379/0
+      - COCOTB_REDUCED_LOG_FMT=1
+      - ENVIRONMENT=development
+    ports:
+      - "8002:8000"
+      - "5000:5000"  # Hardware simulation server
+    volumes:
+      - ./hardware:/app/hardware
+      - ./backend:/app/backend
+      - ./tests:/app/tests
+      - ./generated:/app/generated
+    depends_on:
+      - database
+      - redis
+    networks:
+      - codesign-dev-network
+
+  # Development Worker
+  worker:
+    build:
+      context: .
+      target: development
+    container_name: codesign-worker-dev
+    command: celery -A codesign_playground.worker worker --loglevel=debug --concurrency=2
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password@database:5432/codesign_playground_dev
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=dev-secret-key
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+      - ./generated:/app/generated
+    networks:
+      - codesign-dev-network
+
+  # Flower (Development)
+  flower:
+    build:
+      context: .
+      target: development
+    container_name: codesign-flower-dev
+    command: celery -A codesign_playground.worker flower --port=5555
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "5556:5555"
+    depends_on:
+      - redis
+    networks:
+      - codesign-dev-network
+
+  # MailHog (Email testing)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: codesign-mailhog-dev
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - codesign-dev-network
+
+  # MinIO (S3-compatible storage for development)
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: codesign-minio-dev
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_dev_data:/data
+    networks:
+      - codesign-dev-network
+
+  # Development Database Admin (pgAdmin)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: codesign-pgadmin-dev
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@codesign.dev
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_dev_data:/var/lib/pgadmin
+    depends_on:
+      - database
+    networks:
+      - codesign-dev-network
+
+  # Redis Commander (Redis GUI)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: codesign-redis-commander-dev
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - codesign-dev-network
+
+# Named volumes for development data persistence
+volumes:
+  postgres_dev_data:
+    driver: local
+  redis_dev_data:
+    driver: local
+  minio_dev_data:
+    driver: local
+  pgadmin_dev_data:
+    driver: local
+  node_modules_cache:
+    driver: local
+  node_modules_frontend_cache:
+    driver: local
+  pip_cache:
+    driver: local
+
+# Development network
+networks:
+  codesign-dev-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.21.0.0/16

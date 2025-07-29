@@ -1,0 +1,193 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate configuration for AI Hardware Co-Design Playground",
+  "extends": [
+    "config:base",
+    "group:recommended",
+    "workarounds:all",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":automergeDigest",
+    ":automergeMinor"
+  ],
+  "timezone": "UTC",
+  "schedule": ["before 9am on Monday"],
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "stabilityDays": 3,
+  "assignees": ["@danieleschmidt"],
+  "reviewers": ["@danieleschmidt"],
+  "labels": ["dependencies", "renovate"],
+  "commitMessagePrefix": "deps:",
+  "commitMessageAction": "update",
+  "commitMessageTopic": "{{depName}}",
+  "commitMessageExtra": "to {{newVersion}}",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["before 6am on Sunday"]
+  },
+  "packageRules": [
+    {
+      "description": "Group Python development dependencies",
+      "matchManagers": ["pip_requirements", "pip_setup"],
+      "matchDepTypes": ["dev"],
+      "groupName": "Python dev dependencies",
+      "automerge": true,
+      "schedule": ["after 10pm on Sunday", "before 5am on Monday"]
+    },
+    {
+      "description": "Group Node.js development dependencies",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "Node.js dev dependencies",
+      "automerge": true,
+      "schedule": ["after 10pm on Sunday", "before 5am on Monday"]
+    },
+    {
+      "description": "Auto-merge security updates",
+      "matchDatasources": ["pypi", "npm"],
+      "matchUpdateTypes": ["patch"],
+      "labels": ["security"],
+      "automerge": true
+    },
+    {
+      "description": "Separate major updates",
+      "matchUpdateTypes": ["major"],
+      "labels": ["major-update"],
+      "automerge": false,
+      "schedule": ["at any time"]
+    },
+    {
+      "description": "Pin Docker images",
+      "matchDatasources": ["docker"],
+      "pinDigests": true
+    },
+    {
+      "description": "Update GitHub Actions monthly",
+      "matchManagers": ["github-actions"],
+      "schedule": ["before 6am on the first day of the month"],
+      "automerge": true
+    },
+    {
+      "description": "Slow down pre-commit updates",
+      "matchManagers": ["pre-commit"],
+      "schedule": ["every weekend"],
+      "automerge": true
+    },
+    {
+      "description": "Critical security patches",
+      "matchDatasources": ["pypi", "npm"],
+      "matchPackagePatterns": ["*"],
+      "vulnerabilityAlerts": {
+        "labels": ["security", "critical"],
+        "automerge": true,
+        "schedule": ["at any time"]
+      }
+    },
+    {
+      "description": "ML/AI frameworks",
+      "matchPackageNames": [
+        "torch",
+        "tensorflow",
+        "onnx",
+        "onnxruntime",
+        "transformers",
+        "accelerate"
+      ],
+      "groupName": "ML frameworks",
+      "schedule": ["after 10pm on Saturday", "before 5am on Sunday"],
+      "automerge": false
+    },
+    {
+      "description": "Hardware simulation tools",
+      "matchPackageNames": [
+        "cocotb",
+        "cocotb-test",
+        "pyverilog",
+        "nmigen",
+        "amaranth",
+        "litex"
+      ],
+      "groupName": "Hardware simulation",
+      "schedule": ["after 10pm on Saturday", "before 5am on Sunday"],
+      "automerge": false
+    },
+    {
+      "description": "Testing dependencies",
+      "matchPackageNames": [
+        "pytest",
+        "pytest-cov",
+        "pytest-asyncio",
+        "pytest-mock",
+        "pytest-xdist",
+        "pytest-benchmark",
+        "hypothesis",
+        "factory-boy",
+        "freezegun",
+        "responses"
+      ],
+      "groupName": "Testing dependencies",
+      "automerge": true
+    },
+    {
+      "description": "Code quality tools",
+      "matchPackageNames": [
+        "black",
+        "isort",
+        "ruff",
+        "mypy",
+        "pylint",
+        "bandit",
+        "safety",
+        "pre-commit"
+      ],
+      "groupName": "Code quality",
+      "automerge": true
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security", "vulnerability"],
+    "assignees": ["@danieleschmidt"],
+    "reviewers": ["@danieleschmidt"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "configWarningReuseIssue": false,
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Dependency Dashboard",
+  "dependencyDashboardHeader": "This issue lists Renovate updates and detected dependencies. Read the [Dependency Dashboard docs](https://docs.renovatebot.com/key-concepts/dashboard/) to learn more.",
+  "dependencyDashboardFooter": "## Configuration\n\n❓ Check the [Renovate configuration](renovate.json) for this repository.",
+  "ignoreDeps": [
+    "node",
+    "python"
+  ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/.venv/**",
+    "**/venv/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["(^|/)Dockerfile$"],
+      "matchStrings": [
+        "FROM (?<depName>\\S+):(?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "regexManagers": [
+    {
+      "fileMatch": ["^pyproject\\.toml$"],
+      "matchStrings": [
+        "version = \"(?<currentValue>.*)\""
+      ],
+      "depNameTemplate": "ai-hardware-codesign-playground",
+      "datasourceTemplate": "github-tags",
+      "lookupNameTemplate": "terragon-labs/ai-hardware-codesign-playground"
+    }
+  ]
+}
