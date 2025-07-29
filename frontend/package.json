@@ -1,0 +1,70 @@
+{
+  "name": "ai-hardware-codesign-playground-frontend",
+  "version": "0.1.0",
+  "description": "Frontend for AI Hardware Co-Design Playground",
+  "private": true,
+  "homepage": "https://github.com/terragon-labs/ai-hardware-codesign-playground",
+  "bugs": {
+    "url": "https://github.com/terragon-labs/ai-hardware-codesign-playground/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/terragon-labs/ai-hardware-codesign-playground.git",
+    "directory": "frontend"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Terragon Labs",
+    "email": "contact@terragon-labs.com",
+    "url": "https://terragon-labs.com"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "next": "^14.0.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@types/node": "^20.10.5",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "typescript": "^5.3.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "eslint-config-next": "^14.0.4",
+    "prettier": "^3.1.1",
+    "jest": "^29.7.0",
+    "@testing-library/react": "^14.1.2",
+    "@testing-library/jest-dom": "^6.1.5",
+    "@storybook/react": "^7.6.6"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
