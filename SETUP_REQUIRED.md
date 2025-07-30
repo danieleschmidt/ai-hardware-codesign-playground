@@ -6,47 +6,37 @@ This pull request implements comprehensive SDLC enhancements that require manual
 
 **Due to GitHub App permissions, the following workflow files cannot be automatically created and must be copied manually:**
 
-### 1. `.github/workflows/ci.yml`
-```yaml
-# Copy the contents from the staged file in this PR
-# This file implements comprehensive CI pipeline with:
-# - Multi-Python version testing (3.9-3.12)
-# - Quality gates (lint, typecheck, security)
-# - Integration testing with PostgreSQL/Redis
-# - Docker build validation
-```
+### Complete Workflow Configurations
 
-### 2. `.github/workflows/security.yml`
-```yaml
-# Copy the contents from the staged file in this PR
-# This file implements advanced security scanning:
-# - Dependency security (Safety, Bandit)
-# - Container vulnerability scanning (Trivy)
-# - Secret detection (TruffleHog)
-# - Code security analysis (CodeQL)
-# - SBOM generation
-```
+**📋 See [docs/GITHUB_WORKFLOWS_SETUP.md](docs/GITHUB_WORKFLOWS_SETUP.md) for the complete workflow files.**
 
-### 3. `.github/workflows/performance.yml`
-```yaml
-# Copy the contents from the staged file in this PR
-# This file implements performance testing:
-# - Python benchmark tests
-# - Load testing with services
-# - Memory profiling
-# - Performance regression detection
-```
+The comprehensive GitHub Actions workflows include:
 
-### 4. `.github/workflows/compliance.yml`
-```yaml
-# Copy the contents from the staged file in this PR
-# This file implements compliance automation:
-# - License compliance checking
-# - Dependency auditing
-# - Policy validation
-# - Supply chain security (SLSA)
-# - Data privacy scanning
-```
+1. **CI Pipeline** (`.github/workflows/ci.yml`)
+   - Multi-Python version testing (3.9-3.12)
+   - Quality gates (lint, typecheck, security)
+   - Integration testing with PostgreSQL/Redis
+   - Docker build validation
+
+2. **Security Scanning** (`.github/workflows/security.yml`)
+   - Dependency security (Safety, Bandit)
+   - Container vulnerability scanning (Trivy)
+   - Secret detection (TruffleHog)
+   - Code security analysis (CodeQL)
+   - SBOM generation
+
+3. **Performance Testing** (`.github/workflows/performance.yml`)
+   - Python benchmark tests
+   - Load testing with services
+   - Memory profiling
+   - Performance regression detection
+
+4. **Compliance & Governance** (`.github/workflows/compliance.yml`)
+   - License compliance checking
+   - Dependency auditing
+   - Policy validation
+   - Supply chain security (SLSA)
+   - Data privacy scanning
 
 ## ✅ Successfully Implemented (No Manual Action Required)
 
