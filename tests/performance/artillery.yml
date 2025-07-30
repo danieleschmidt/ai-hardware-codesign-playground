@@ -1,0 +1,101 @@
+config:
+  target: 'http://localhost:8000'
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 300
+      arrivalRate: 10
+      rampTo: 50
+      name: "Ramp up load"
+    - duration: 600
+      arrivalRate: 50
+      name: "Sustained load"
+  plugins:
+    metrics-by-endpoint:
+      useOnlyRequestNames: true
+  processor: "./helpers.js"
+
+scenarios:
+  - name: "API Load Test"
+    weight: 70
+    flow:
+      - get:
+          url: "/health"
+          capture:
+            - json: "$.status"
+              as: "health_status"
+      - think: 1
+      - get:
+          url: "/api/v1/projects"
+          headers:
+            Accept: "application/json"
+      - think: 2
+      - post:
+          url: "/api/v1/projects"
+          json:
+            name: "Load Test Project {{ $randomInt(1000, 9999) }}"
+            description: "Performance testing project"
+            model_type: "{{ $randomChoice(['cnn', 'transformer', 'rnn']) }}"
+            target_hardware: "{{ $randomChoice(['fpga', 'asic', 'gpu']) }}"
+          capture:
+            - json: "$.id"
+              as: "project_id"
+      - think: 3
+      - post:
+          url: "/api/v1/optimize"
+          json:
+            project_id: "{{ project_id }}"
+            optimization_target: "{{ $randomChoice(['latency', 'power', 'area']) }}"
+            constraints:
+              max_power: "{{ $randomFloat(1.0, 10.0) }}"
+              max_area: "{{ $randomFloat(100, 1000) }}"
+
+  - name: "Model Upload Test"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/v1/models/upload"
+          formData:
+            name: "test_model_{{ $randomInt(1000, 9999) }}"
+            framework: "{{ $randomChoice(['pytorch', 'tensorflow', 'onnx']) }}"
+            model: "@./test_data/sample_model.onnx"
+
+  - name: "RTL Generation Test"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/v1/rtl/generate"
+          json:
+            design_id: "{{ $randomInt(1, 10) }}"
+            target_language: "{{ $randomChoice(['verilog', 'vhdl']) }}"
+            optimization_level: "{{ $randomInt(1, 3) }}"
+            clock_frequency: "{{ $randomFloat(100, 1000) }}"
+      - think: 5
+      - get:
+          url: "/api/v1/rtl/status/{{ $randomInt(1, 100) }}"
+
+  - name: "Simulation Test"
+    weight: 15
+    flow:
+      - post:
+          url: "/api/v1/simulate"
+          json:
+            design_id: "{{ $randomInt(1, 10) }}"
+            test_vectors: "{{ $generateTestVectors() }}"
+            simulation_time: "{{ $randomFloat(1000, 10000) }}"
+            timing_analysis: true
+      - think: 10
+      - get:
+          url: "/api/v1/simulate/results/{{ $randomInt(1, 100) }}"
+
+  - name: "Metrics Collection"
+    weight: 5
+    flow:
+      - loop:
+          - get:
+              url: "/api/v1/metrics"
+          - get:
+              url: "/api/v1/metrics/system"
+          - think: 30
+        count: 5
