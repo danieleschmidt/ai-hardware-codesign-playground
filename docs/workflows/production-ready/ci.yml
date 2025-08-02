@@ -1,0 +1,479 @@
+# Comprehensive CI Pipeline Template
+# Copy this to .github/workflows/ci.yml and customize as needed
+
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "18"
+  POETRY_VERSION: "1.6.1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # Code Quality and Security Checks
+  # ============================================================================
+  
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Install Node Dependencies
+        run: npm ci
+      
+      - name: Run Pre-commit Hooks
+        uses: pre-commit/action@v3.0.0
+        with:
+          extra_args: --all-files
+      
+      - name: Python Linting
+        run: |
+          ruff check . --output-format=github
+          black --check .
+          isort --check-only .
+      
+      - name: Python Type Checking
+        run: mypy backend/codesign_playground/
+      
+      - name: JavaScript/TypeScript Linting
+        run: |
+          npm run lint:frontend
+          npm run typecheck:frontend
+      
+      - name: Security Scanning
+        run: |
+          bandit -r backend/codesign_playground/ -f json -o bandit-report.json
+          safety check --json --output safety-report.json
+        continue-on-error: true
+      
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+
+  # ============================================================================
+  # Testing Matrix
+  # ============================================================================
+  
+  test-python:
+    name: Python Tests
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        exclude:
+          - os: windows-latest
+            python-version: "3.9"
+          - os: macos-latest
+            python-version: "3.9"
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Run Unit Tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          pytest tests/unit/ -v --cov=backend/codesign_playground \
+            --cov-report=xml --cov-report=term-missing \
+            --junit-xml=junit/test-results-${{ matrix.os }}-${{ matrix.python-version }}.xml
+      
+      - name: Run Integration Tests
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379/0
+        run: |
+          pytest tests/integration/ -v --junit-xml=junit/integration-results.xml
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.python-version }}
+          path: junit/test-*.xml
+      
+      - name: Upload Coverage Reports
+        uses: codecov/codecov-action@v3
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  test-frontend:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Install Dependencies
+        run: npm ci
+      
+      - name: Run Frontend Tests
+        run: |
+          npm run test:frontend -- --coverage --watchAll=false \
+            --testResultsProcessor=jest-junit
+        env:
+          JEST_JUNIT_OUTPUT_DIR: ./junit/
+          JEST_JUNIT_OUTPUT_NAME: frontend-test-results.xml
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: frontend-test-results
+          path: junit/frontend-test-results.xml
+      
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./frontend/coverage/lcov.info
+          flags: frontend
+          name: codecov-frontend
+
+  # ============================================================================
+  # End-to-End Testing
+  # ============================================================================
+  
+  test-e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [code-quality, test-python, test-frontend]
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: e2e_test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm ci
+      
+      - name: Build Application
+        run: |
+          npm run build:frontend
+          npm run build:backend
+      
+      - name: Start Application
+        run: |
+          npm run start &
+          sleep 30
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/e2e_test_db
+          REDIS_URL: redis://localhost:6379/0
+          NODE_ENV: test
+      
+      - name: Run E2E Tests
+        run: |
+          pytest tests/e2e/ -v --junit-xml=junit/e2e-results.xml
+        env:
+          BASE_URL: http://localhost:8000
+      
+      - name: Upload E2E Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: e2e-test-results
+          path: junit/e2e-results.xml
+      
+      - name: Upload Screenshots
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: e2e-screenshots
+          path: tests/e2e/screenshots/
+
+  # ============================================================================
+  # Hardware Simulation Tests
+  # ============================================================================
+  
+  test-hardware:
+    name: Hardware Simulation Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Install Hardware Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator iverilog gtkwave
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Install Hardware Dependencies
+        run: |
+          pip install cocotb cocotb-test pyverilog
+      
+      - name: Run Hardware Tests
+        run: |
+          pytest tests/ -m hardware -v --junit-xml=junit/hardware-results.xml
+        env:
+          HARDWARE_TOOLS_AVAILABLE: "true"
+      
+      - name: Upload Hardware Test Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: hardware-test-results
+          path: junit/hardware-results.xml
+
+  # ============================================================================
+  # Build and Package
+  # ============================================================================
+  
+  build:
+    name: Build and Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test-python, test-frontend]
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip build
+          pip install -r requirements.txt
+          npm ci
+      
+      - name: Build Frontend
+        run: npm run build:frontend
+      
+      - name: Build Python Package
+        run: python -m build
+      
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: |
+            dist/
+            frontend/dist/
+
+  # ============================================================================
+  # Docker Build
+  # ============================================================================
+  
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build]
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker Images
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: |
+            ai-hardware-codesign-playground:latest
+            ai-hardware-codesign-playground:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================================
+  # Deployment (Production)
+  # ============================================================================
+  
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [test-e2e, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Deploy to Production
+        run: |
+          echo "Deploying to production environment..."
+          # Add actual deployment commands here
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          PRODUCTION_URL: ${{ secrets.PRODUCTION_URL }}
+
+  # ============================================================================
+  # Notification and Reporting
+  # ============================================================================
+  
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [code-quality, test-python, test-frontend, test-e2e, build, docker-build]
+    if: always()
+    
+    steps:
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          channel: '#ci-notifications'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow

@@ -1,0 +1,489 @@
+# Security Scanning and Compliance Template
+# Copy this to .github/workflows/security.yml and customize as needed
+
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "18"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  # ============================================================================
+  # Dependency Vulnerability Scanning
+  # ============================================================================
+  
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety pip-audit
+      
+      - name: Python Security Scan (Safety)
+        run: |
+          safety check --json --output safety-report.json
+          safety check --short-report
+        continue-on-error: true
+      
+      - name: Python Security Scan (pip-audit)
+        run: |
+          pip-audit --format=json --output=pip-audit-report.json
+          pip-audit --format=cyclone-json --output=pip-audit-cyclone.json
+        continue-on-error: true
+      
+      - name: Node.js Security Scan
+        run: |
+          npm audit --audit-level=moderate --json > npm-audit-report.json
+          npm audit --audit-level=moderate
+        continue-on-error: true
+      
+      - name: Upload Dependency Scan Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: dependency-scan-results
+          path: |
+            safety-report.json
+            pip-audit-report.json
+            pip-audit-cyclone.json
+            npm-audit-report.json
+
+  # ============================================================================
+  # Static Application Security Testing (SAST)
+  # ============================================================================
+  
+  sast-scan:
+    name: Static Application Security Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit[toml] semgrep
+      
+      - name: Run Bandit Security Scan
+        run: |
+          bandit -r backend/codesign_playground/ -f json -o bandit-report.json
+          bandit -r backend/codesign_playground/ -f sarif -o bandit-results.sarif
+        continue-on-error: true
+      
+      - name: Run Semgrep Security Scan
+        run: |
+          semgrep --config=auto --json --output=semgrep-report.json backend/ frontend/
+          semgrep --config=auto --sarif --output=semgrep-results.sarif backend/ frontend/
+        continue-on-error: true
+      
+      - name: Upload SARIF Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: |
+            bandit-results.sarif
+            semgrep-results.sarif
+      
+      - name: Upload SAST Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: sast-results
+          path: |
+            bandit-report.json
+            bandit-results.sarif
+            semgrep-report.json
+            semgrep-results.sarif
+
+  # ============================================================================
+  # Secret Scanning
+  # ============================================================================
+  
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Secret Detection Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install detect-secrets truffleHog
+      
+      - name: Run detect-secrets
+        run: |
+          detect-secrets scan --all-files --force-use-all-plugins \
+            --baseline .secrets.baseline > secrets-scan-results.json
+        continue-on-error: true
+      
+      - name: Run TruffleHog
+        run: |
+          truffleHog --json --regex --entropy=False . > trufflehog-results.json
+        continue-on-error: true
+      
+      - name: Upload Secret Scan Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: secret-scan-results
+          path: |
+            secrets-scan-results.json
+            trufflehog-results.json
+
+  # ============================================================================
+  # Container Security Scanning
+  # ============================================================================
+  
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: codesign-playground:scan
+      
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'codesign-playground:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Run Trivy (JSON Output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'codesign-playground:scan'
+          format: 'json'
+          output: 'trivy-results.json'
+      
+      - name: Upload Trivy Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      - name: Upload Container Scan Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: container-scan-results
+          path: |
+            trivy-results.sarif
+            trivy-results.json
+
+  # ============================================================================
+  # License Compliance Scanning
+  # ============================================================================
+  
+  license-scan:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      
+      - name: Install License Scanning Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-licenses
+          npm install -g license-checker
+      
+      - name: Python License Scan
+        run: |
+          pip install -r requirements.txt
+          pip-licenses --format=json --output-file=python-licenses.json
+          pip-licenses --format=csv --output-file=python-licenses.csv
+      
+      - name: Node.js License Scan
+        run: |
+          npm ci
+          license-checker --json --out nodejs-licenses.json
+          license-checker --csv --out nodejs-licenses.csv
+      
+      - name: Upload License Scan Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: license-scan-results
+          path: |
+            python-licenses.json
+            python-licenses.csv
+            nodejs-licenses.json
+            nodejs-licenses.csv
+
+  # ============================================================================
+  # Infrastructure as Code Security
+  # ============================================================================
+  
+  iac-scan:
+    name: Infrastructure Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Run Checkov IaC Scanner
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile,docker_compose,kubernetes,terraform
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          quiet: true
+          soft_fail: true
+      
+      - name: Upload Checkov Results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+      
+      - name: Upload IaC Scan Results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: iac-scan-results
+          path: checkov-results.sarif
+
+  # ============================================================================
+  # SBOM Generation
+  # ============================================================================
+  
+  sbom-generation:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm ci
+      
+      - name: Generate Python SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: ./
+          format: spdx-json
+          output-file: python-sbom.spdx.json
+      
+      - name: Generate Container SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: codesign-playground:scan
+          format: cyclone-dx-json
+          output-file: container-sbom.cyclone.json
+      
+      - name: Upload SBOM Files
+        uses: actions/upload-artifact@v3
+        with:
+          name: sbom-files
+          path: |
+            python-sbom.spdx.json
+            container-sbom.cyclone.json
+
+  # ============================================================================
+  # Security Report Generation
+  # ============================================================================
+  
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, sast-scan, secret-scan, container-scan, license-scan, iac-scan, sbom-generation]
+    if: always()
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v3
+      
+      - name: Generate Security Summary
+        run: |
+          echo "# Security Scan Summary - $(date)" > security-summary.md
+          echo "" >> security-summary.md
+          echo "## Scan Results" >> security-summary.md
+          echo "" >> security-summary.md
+          
+          # Count vulnerabilities from different tools
+          if [ -f dependency-scan-results/safety-report.json ]; then
+            echo "### Dependency Vulnerabilities" >> security-summary.md
+            echo "- Safety scan completed" >> security-summary.md
+          fi
+          
+          if [ -f sast-results/bandit-report.json ]; then
+            echo "### SAST Scan Results" >> security-summary.md
+            echo "- Bandit scan completed" >> security-summary.md
+          fi
+          
+          if [ -f container-scan-results/trivy-results.json ]; then
+            echo "### Container Scan Results" >> security-summary.md
+            echo "- Trivy scan completed" >> security-summary.md
+          fi
+          
+          echo "" >> security-summary.md
+          echo "**Generated on:** $(date)" >> security-summary.md
+      
+      - name: Upload Security Summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-summary
+          path: security-summary.md
+      
+      - name: Comment PR with Security Summary
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔒 Security Scan Results\n\n${summary}`
+            });
+
+  # ============================================================================
+  # Security Policy Compliance
+  # ============================================================================
+  
+  compliance-check:
+    name: Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Check Security Policy
+        run: |
+          echo "Checking security policy compliance..."
+          
+          # Check for required security files
+          required_files=("SECURITY.md" ".github/dependabot.yml" ".secrets.baseline")
+          
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ Missing required security file: $file"
+              exit 1
+            else
+              echo "✅ Found required security file: $file"
+            fi
+          done
+          
+          echo "✅ All required security files are present"
+      
+      - name: Validate Security Configuration
+        run: |
+          echo "Validating security configuration..."
+          
+          # Check for security-related configuration
+          if grep -q "SECURITY" .env.example; then
+            echo "✅ Security configuration template found"
+          else
+            echo "⚠️  No security configuration template found"
+          fi
+          
+          # Check for proper gitignore patterns
+          security_patterns=(".env" "*.key" "*.pem" "secrets.yml")
+          
+          for pattern in "${security_patterns[@]}"; do
+            if grep -q "$pattern" .gitignore; then
+              echo "✅ Security pattern '$pattern' found in .gitignore"
+            else
+              echo "⚠️  Security pattern '$pattern' not found in .gitignore"
+            fi
+          done
