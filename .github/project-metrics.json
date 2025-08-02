@@ -1,0 +1,339 @@
+{
+  "name": "ai-hardware-codesign-playground",
+  "description": "AI Hardware Co-Design Playground - Comprehensive metrics tracking",
+  "version": "1.0.0",
+  "lastUpdated": "2025-08-02T00:00:00Z",
+  "repository": {
+    "name": "ai-hardware-codesign-playground",
+    "owner": "danieleschmidt",
+    "url": "https://github.com/danieleschmidt/ai-hardware-codesign-playground",
+    "defaultBranch": "main",
+    "topics": ["ai", "hardware", "codesign", "fpga", "machine-learning", "automation"]
+  },
+  "metrics": {
+    "codeQuality": {
+      "coverage": {
+        "target": 80,
+        "current": 0,
+        "unit": "percentage",
+        "trend": "stable",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "maintainabilityIndex": {
+        "target": 80,
+        "current": 85,
+        "unit": "score",
+        "trend": "improving",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "technicalDebt": {
+        "target": 10,
+        "current": 5,
+        "unit": "hours",
+        "trend": "decreasing",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "codeSmells": {
+        "target": 0,
+        "current": 2,
+        "unit": "count",
+        "trend": "stable",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      }
+    },
+    "security": {
+      "vulnerabilities": {
+        "critical": {
+          "target": 0,
+          "current": 0,
+          "unit": "count",
+          "trend": "stable"
+        },
+        "high": {
+          "target": 0,
+          "current": 0,
+          "unit": "count",
+          "trend": "stable"
+        },
+        "medium": {
+          "target": 2,
+          "current": 1,
+          "unit": "count",
+          "trend": "decreasing"
+        },
+        "low": {
+          "target": 5,
+          "current": 3,
+          "unit": "count",
+          "trend": "stable"
+        }
+      },
+      "dependencyHealth": {
+        "outdated": {
+          "target": 5,
+          "current": 2,
+          "unit": "count",
+          "trend": "decreasing"
+        },
+        "deprecated": {
+          "target": 0,
+          "current": 0,
+          "unit": "count",
+          "trend": "stable"
+        }
+      }
+    },
+    "performance": {
+      "buildTime": {
+        "target": 300,
+        "current": 180,
+        "unit": "seconds",
+        "trend": "improving",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "testExecutionTime": {
+        "target": 120,
+        "current": 85,
+        "unit": "seconds",
+        "trend": "stable",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "containerImageSize": {
+        "target": 500,
+        "current": 420,
+        "unit": "MB",
+        "trend": "decreasing",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "hardwareSimulationTime": {
+        "target": 600,
+        "current": 480,
+        "unit": "seconds",
+        "trend": "improving",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      }
+    },
+    "reliability": {
+      "uptime": {
+        "target": 99.9,
+        "current": 99.5,
+        "unit": "percentage",
+        "trend": "stable",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "meanTimeToRecovery": {
+        "target": 30,
+        "current": 15,
+        "unit": "minutes",
+        "trend": "improving",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      },
+      "errorRate": {
+        "target": 0.1,
+        "current": 0.05,
+        "unit": "percentage",
+        "trend": "improving",
+        "lastMeasured": "2025-08-02T00:00:00Z"
+      }
+    },
+    "development": {
+      "deploymentFrequency": {
+        "target": 7,
+        "current": 5,
+        "unit": "days",
+        "trend": "improving",
+        "description": "Average days between deployments"
+      },
+      "leadTimeForChanges": {
+        "target": 2,
+        "current": 1.5,
+        "unit": "days",
+        "trend": "improving",
+        "description": "Time from commit to production"
+      },
+      "changeFailureRate": {
+        "target": 5,
+        "current": 2,
+        "unit": "percentage",
+        "trend": "improving",
+        "description": "Percentage of deployments causing failures"
+      },
+      "meanTimeToRestore": {
+        "target": 60,
+        "current": 30,
+        "unit": "minutes",
+        "trend": "improving",
+        "description": "Time to restore service after incident"
+      }
+    },
+    "collaboration": {
+      "pullRequestSize": {
+        "target": 200,
+        "current": 150,
+        "unit": "lines",
+        "trend": "stable",
+        "description": "Average lines changed per PR"
+      },
+      "reviewTime": {
+        "target": 24,
+        "current": 18,
+        "unit": "hours",
+        "trend": "improving",
+        "description": "Average time to review and merge PR"
+      },
+      "activeContributors": {
+        "target": 5,
+        "current": 3,
+        "unit": "count",
+        "trend": "stable",
+        "description": "Number of active contributors in last 30 days"
+      }
+    },
+    "compliance": {
+      "licenseCompliance": {
+        "target": 100,
+        "current": 100,
+        "unit": "percentage",
+        "trend": "stable",
+        "description": "Percentage of dependencies with approved licenses"
+      },
+      "securityPolicyCompliance": {
+        "target": 100,
+        "current": 95,
+        "unit": "percentage",
+        "trend": "improving",
+        "description": "Compliance with security policies"
+      },
+      "documentationCoverage": {
+        "target": 90,
+        "current": 85,
+        "unit": "percentage",
+        "trend": "improving",
+        "description": "Percentage of features with documentation"
+      }
+    }
+  },
+  "automation": {
+    "cicdPipelineSuccessRate": {
+      "target": 95,
+      "current": 92,
+      "unit": "percentage",
+      "trend": "stable",
+      "lastMeasured": "2025-08-02T00:00:00Z"
+    },
+    "automatedTestCoverage": {
+      "target": 80,
+      "current": 75,
+      "unit": "percentage",
+      "trend": "improving",
+      "lastMeasured": "2025-08-02T00:00:00Z"
+    },
+    "deploymentAutomation": {
+      "target": 100,
+      "current": 90,
+      "unit": "percentage",
+      "trend": "improving",
+      "description": "Percentage of deployments that are automated"
+    }
+  },
+  "businessValue": {
+    "featureDeliveryRate": {
+      "target": 4,
+      "current": 3,
+      "unit": "features/month",
+      "trend": "stable",
+      "description": "Number of features delivered per month"
+    },
+    "bugFixRate": {
+      "target": 10,
+      "current": 12,
+      "unit": "bugs/month",
+      "trend": "improving",
+      "description": "Number of bugs fixed per month"
+    },
+    "userSatisfaction": {
+      "target": 4.5,
+      "current": 4.2,
+      "unit": "rating",
+      "trend": "improving",
+      "description": "Average user satisfaction rating (1-5)"
+    }
+  },
+  "resources": {
+    "computeUsage": {
+      "target": 80,
+      "current": 65,
+      "unit": "percentage",
+      "trend": "stable",
+      "description": "Average compute resource utilization"
+    },
+    "storageUsage": {
+      "target": 85,
+      "current": 70,
+      "unit": "percentage",
+      "trend": "increasing",
+      "description": "Storage utilization percentage"
+    },
+    "cloudCosts": {
+      "target": 1000,
+      "current": 850,
+      "unit": "USD/month",
+      "trend": "stable",
+      "description": "Monthly cloud infrastructure costs"
+    }
+  },
+  "alerts": {
+    "thresholds": {
+      "critical": {
+        "coverage": "< 50%",
+        "vulnerabilities.critical": "> 0",
+        "uptime": "< 99%",
+        "errorRate": "> 1%"
+      },
+      "warning": {
+        "coverage": "< 70%",
+        "buildTime": "> 400s",
+        "vulnerabilities.high": "> 0",
+        "technicalDebt": "> 20h"
+      }
+    },
+    "notifications": {
+      "email": ["devops@company.com"],
+      "slack": "#alerts",
+      "webhook": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+    }
+  },
+  "reporting": {
+    "schedule": {
+      "daily": ["performance", "security"],
+      "weekly": ["codeQuality", "collaboration"],
+      "monthly": ["businessValue", "compliance", "resources"]
+    },
+    "dashboards": {
+      "grafana": "http://localhost:3001/d/project-overview",
+      "sonarqube": "https://sonarcloud.io/dashboard?id=ai-hardware-codesign-playground"
+    }
+  },
+  "history": {
+    "milestones": [
+      {
+        "date": "2025-08-02",
+        "version": "1.0.0",
+        "event": "Initial metrics configuration",
+        "description": "Established baseline metrics and monitoring"
+      }
+    ],
+    "trends": {
+      "lastWeek": {
+        "coverage": "stable",
+        "performance": "improving",
+        "security": "stable"
+      },
+      "lastMonth": {
+        "coverage": "improving",
+        "performance": "stable",
+        "security": "improving"
+      }
+    }
+  }
+}
