@@ -1,0 +1,541 @@
+# Kubernetes production deployment for AI Hardware Co-Design Playground
+# Multi-region, scalable, and production-ready configuration
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/instance: production
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/component: platform
+    app.kubernetes.io/part-of: codesign-playground
+    app.kubernetes.io/managed-by: kubernetes
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codesign-playground-config
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: config
+data:
+  LOG_LEVEL: "info"
+  WORKERS: "4"
+  NODE_ENV: "production"
+  ENABLE_METRICS: "true"
+  ENABLE_TRACING: "true"
+  ENABLE_MULTI_REGION: "true"
+  REGION_AUTO_DETECT: "true"
+  COMPLIANCE_MODE: "global"
+  WARM_UP_CACHE: "true"
+  MAX_REQUEST_SIZE: "10MB"
+  ALLOWED_HOSTS: "codesign-playground.com,*.codesign-playground.com"
+
+---
+# Secret for sensitive configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: codesign-playground-secrets
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: config
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://user:password@postgres:5432/codesign_playground"
+  REDIS_URL: "redis://redis:6379/0"
+  SECRET_KEY: "your-super-secret-key-change-in-production"
+  JWT_SECRET: "your-jwt-secret-key-change-in-production"
+
+---
+# Deployment for the main application
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codesign-playground-api
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: api
+    app.kubernetes.io/instance: production
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codesign-playground
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codesign-playground
+        app.kubernetes.io/component: api
+        app.kubernetes.io/instance: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: codesign-playground-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: api
+        image: terragon/codesign-playground:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "8000"
+        - name: HOST
+          value: "0.0.0.0"
+        envFrom:
+        - configMapRef:
+            name: codesign-playground-config
+        - secretRef:
+            name: codesign-playground-secrets
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+            ephemeral-storage: 1Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+            ephemeral-storage: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1001
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: app-data
+          mountPath: /app/data
+        - name: app-logs
+          mountPath: /app/logs
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: app-data
+        persistentVolumeClaim:
+          claimName: codesign-playground-data
+      - name: app-logs
+        emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                  - codesign-playground
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                  - api
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: node.kubernetes.io/not-ready
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 300
+      - key: node.kubernetes.io/unreachable
+        operator: Exists
+        effect: NoExecute
+        tolerationSeconds: 300
+
+---
+# HorizontalPodAutoscaler for automatic scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: codesign-playground-api-hpa
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: codesign-playground-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+
+---
+# Service for the API
+apiVersion: v1
+kind: Service
+metadata:
+  name: codesign-playground-api
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: http
+    protocol: TCP
+    name: http
+  - port: 9090
+    targetPort: metrics
+    protocol: TCP
+    name: metrics
+  selector:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: api
+
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codesign-playground-ingress
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: 10m
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://codesign-playground.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+spec:
+  tls:
+  - hosts:
+    - api.codesign-playground.com
+    - codesign-playground.com
+    secretName: codesign-playground-tls
+  rules:
+  - host: api.codesign-playground.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: codesign-playground-api
+            port:
+              number: 8000
+  - host: codesign-playground.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: codesign-playground-api
+            port:
+              number: 8000
+
+---
+# PersistentVolumeClaim for data storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: codesign-playground-data
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd
+
+---
+# ServiceAccount for the application
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codesign-playground-api
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: api
+automountServiceAccountToken: false
+
+---
+# PodDisruptionBudget for high availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: codesign-playground-api-pdb
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codesign-playground
+      app.kubernetes.io/component: api
+
+---
+# NetworkPolicy for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codesign-playground-network-policy
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codesign-playground
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: nginx-ingress
+    ports:
+    - protocol: TCP
+      port: 8000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# ServiceMonitor for Prometheus monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: codesign-playground-metrics
+  namespace: codesign-playground
+  labels:
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codesign-playground
+      app.kubernetes.io/component: api
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+# Redis deployment for caching
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: codesign-playground
+  labels:
+    app: redis
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        args:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --maxmemory
+        - 256mb
+        - --maxmemory-policy
+        - allkeys-lru
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-data
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: codesign-playground
+  labels:
+    app: redis
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+  selector:
+    app: redis
+
+---
+# Redis PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: codesign-playground
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
