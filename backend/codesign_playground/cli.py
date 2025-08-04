@@ -14,7 +14,10 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 import time
 
-from .core import AcceleratorDesigner, ModelOptimizer, DesignSpaceExplorer, Workflow
+from .core import (AcceleratorDesigner, ModelOptimizer, DesignSpaceExplorer, Workflow,
+                  CycleAccurateSimulator, PowerAnalyzer, AreaEstimator, PerformanceOptimizer,
+                  SimulationBackend)
+from .templates import SystolicArray, VectorProcessor, TransformerAccelerator, CustomTemplate
 
 app = typer.Typer(
     name="codesign-playground",
@@ -457,6 +460,336 @@ def benchmark(
 def main() -> None:
     """Main CLI entry point."""
     app()
+
+
+@app.command()
+def simulate_hardware(
+    rtl_file: str = typer.Argument(..., help="Path to RTL file"),
+    testbench: str = typer.Option("./testbench.sv", help="Path to testbench file"),
+    backend: str = typer.Option("analytical", help="Simulation backend"),
+    max_cycles: int = typer.Option(1000000, help="Maximum simulation cycles"),
+    save_waveform: bool = typer.Option(False, help="Save waveform data"),
+) -> None:
+    """Run cycle-accurate hardware simulation."""
+    
+    console.print("[bold]Hardware Simulation[/bold]")
+    
+    try:
+        # Create simulator
+        sim_backend = SimulationBackend(backend.upper())
+        simulator = CycleAccurateSimulator(sim_backend)
+        
+        # Mock input data
+        class MockInputData:
+            def __init__(self):
+                self.size = 1000
+        
+        input_data = MockInputData()
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Running simulation...", total=None)
+            
+            metrics = simulator.run(
+                rtl_file=rtl_file,
+                testbench=testbench,
+                input_data=input_data,
+                max_cycles=max_cycles,
+                save_waveform=save_waveform
+            )
+            
+            progress.update(task, completed=True)
+        
+        # Display results
+        sim_table = Table(title="Simulation Results")
+        sim_table.add_column("Metric", style="cyan")
+        sim_table.add_column("Value", style="green")
+        
+        sim_table.add_row("Operations/Second", f"{metrics.operations_per_second/1e9:.2f} GOP/s")
+        sim_table.add_row("Frames/Second", f"{metrics.frames_per_second:.1f}")
+        sim_table.add_row("Latency", f"{metrics.latency_ms:.2f} ms")
+        sim_table.add_row("Compute Utilization", f"{metrics.compute_utilization:.1%}")
+        sim_table.add_row("Memory Utilization", f"{metrics.memory_utilization:.1%}")
+        sim_table.add_row("Cache Hit Rate", f"{metrics.cache_hit_rate:.1%}")
+        sim_table.add_row("Accuracy", f"{metrics.accuracy:.3f}")
+        
+        console.print(sim_table)
+        console.print(f"[bold green]Simulation completed: {metrics.latency_cycles:,} cycles[/bold green]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Simulation failed: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def analyze_power(
+    design_file: str = typer.Argument(..., help="Path to design file"),
+    technology: str = typer.Option("tsmc_28nm", help="Technology node"),
+    frequency: float = typer.Option(200.0, help="Operating frequency (MHz)"),
+    voltage: float = typer.Option(0.9, help="Supply voltage (V)"),
+    temperature: float = typer.Option(25.0, help="Operating temperature (C)"),
+    activity_file: Optional[str] = typer.Option(None, help="Activity file (VCD/SAIF)"),
+) -> None:
+    """Analyze power consumption of hardware design."""
+    
+    console.print("[bold]Power Analysis[/bold]")
+    
+    try:
+        # Create power analyzer
+        analyzer = PowerAnalyzer(technology)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Analyzing power...", total=None)
+            
+            power_report = analyzer.analyze(
+                design_file=design_file,
+                activity_file=activity_file,
+                frequency_mhz=frequency,
+                voltage=voltage,
+                temperature=temperature
+            )
+            
+            progress.update(task, completed=True)
+        
+        # Display power breakdown
+        power_table = Table(title="Power Analysis Report")
+        power_table.add_column("Component", style="cyan")
+        power_table.add_column("Power (mW)", style="green")
+        power_table.add_column("Percentage", style="yellow")
+        
+        total_power = power_report.total_power_mw()
+        
+        power_table.add_row("Dynamic", f"{power_report.dynamic_power_mw:.1f}", 
+                           f"{power_report.dynamic_power_mw/total_power*100:.1f}%")
+        power_table.add_row("Static", f"{power_report.static_power_mw:.1f}", 
+                           f"{power_report.static_power_mw/total_power*100:.1f}%")
+        power_table.add_row("Compute", f"{power_report.compute_power_mw:.1f}", 
+                           f"{power_report.compute_power_mw/total_power*100:.1f}%")
+        power_table.add_row("Memory", f"{power_report.memory_power_mw:.1f}", 
+                           f"{power_report.memory_power_mw/total_power*100:.1f}%")
+        power_table.add_row("I/O", f"{power_report.io_power_mw:.1f}", 
+                           f"{power_report.io_power_mw/total_power*100:.1f}%")
+        power_table.add_row("Clock", f"{power_report.clock_power_mw:.1f}", 
+                           f"{power_report.clock_power_mw/total_power*100:.1f}%")
+        power_table.add_row("[bold]Total[/bold]", f"[bold]{total_power:.1f}[/bold]", "[bold]100.0%[/bold]")
+        
+        console.print(power_table)
+        
+        # Temperature info
+        temp_table = Table(title="Thermal Analysis")
+        temp_table.add_column("Metric", style="cyan")
+        temp_table.add_column("Value", style="green")
+        
+        temp_table.add_row("Max Temperature", f"{power_report.max_temperature_c:.1f}°C")
+        temp_table.add_row("Average Temperature", f"{power_report.average_temperature_c:.1f}°C")
+        
+        console.print(temp_table)
+        
+        # Power optimization suggestions
+        suggestions = analyzer.suggest_optimizations(power_report)
+        if suggestions:
+            console.print("\n[bold]Power Optimization Suggestions:[/bold]")
+            for i, suggestion in enumerate(suggestions, 1):
+                console.print(f"{i}. [bold]{suggestion['technique']}[/bold]: {suggestion['description']}")
+                console.print(f"   Potential savings: {suggestion['power_savings_mw']:.1f} mW (Effort: {suggestion['effort']})")
+        
+    except Exception as e:
+        console.print(f"[bold red]Power analysis failed: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def estimate_area(
+    design_file: str = typer.Argument(..., help="Path to design file"),
+    technology: str = typer.Option("sky130", help="Technology node"),
+    target_frequency: float = typer.Option(200.0, help="Target frequency (MHz)"),
+    output_floorplan: Optional[str] = typer.Option(None, help="Output floorplan image"),
+) -> None:
+    """Estimate chip area for hardware design."""
+    
+    console.print("[bold]Area Estimation[/bold]")
+    
+    try:
+        # Create area estimator
+        estimator = AreaEstimator(technology)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Estimating area...", total=None)
+            
+            area_report = estimator.estimate(
+                design_file=design_file,
+                target_frequency=target_frequency
+            )
+            
+            progress.update(task, completed=True)
+        
+        # Display area breakdown
+        area_table = Table(title="Area Estimation Report")
+        area_table.add_column("Component", style="cyan")
+        area_table.add_column("Area (mm²)", style="green")
+        area_table.add_column("Percentage", style="yellow")
+        
+        total_area = area_report.total_area_mm2
+        
+        area_table.add_row("Logic", f"{area_report.logic_area_mm2:.3f}", 
+                          f"{area_report.logic_area_mm2/total_area*100:.1f}%")
+        area_table.add_row("Memory", f"{area_report.memory_area_mm2:.3f}", 
+                          f"{area_report.memory_area_mm2/total_area*100:.1f}%")
+        area_table.add_row("I/O", f"{area_report.io_area_mm2:.3f}", 
+                          f"{area_report.io_area_mm2/total_area*100:.1f}%")
+        area_table.add_row("[bold]Total[/bold]", f"[bold]{total_area:.3f}[/bold]", "[bold]100.0%[/bold]")
+        
+        console.print(area_table)
+        
+        # FPGA resource utilization
+        if area_report.luts > 0:
+            fpga_table = Table(title="FPGA Resource Utilization")
+            fpga_table.add_column("Resource", style="cyan")
+            fpga_table.add_column("Count", style="green")
+            
+            fpga_table.add_row("LUTs", f"{area_report.luts:,}")
+            fpga_table.add_row("Flip-Flops", f"{area_report.ffs:,}")
+            fpga_table.add_row("DSPs", f"{area_report.dsps:,}")
+            fpga_table.add_row("BRAMs", f"{area_report.brams:,}")
+            fpga_table.add_row("Utilization", f"{area_report.utilization_percent:.1f}%")
+            
+            console.print(fpga_table)
+        
+        # Generate floorplan if requested
+        if output_floorplan:
+            estimator.visualize_floorplan(area_report, output_floorplan)
+            console.print(f"Floorplan saved to: {output_floorplan}")
+        
+    except Exception as e:
+        console.print(f"[bold red]Area estimation failed: {e}[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def create_template(
+    template_type: str = typer.Argument(..., help="Template type (systolic_array, vector_processor, transformer)"),
+    name: str = typer.Option("my_accelerator", help="Accelerator name"),
+    output_dir: str = typer.Option("./templates", help="Output directory"),
+    **kwargs
+) -> None:
+    """Create hardware accelerator from template."""
+    
+    console.print(f"[bold]Creating {template_type} template[/bold]")
+    
+    try:
+        template = None
+        
+        if template_type == "systolic_array":
+            rows = typer.prompt("Number of rows", type=int, default=16)
+            cols = typer.prompt("Number of columns", type=int, default=16)
+            data_width = typer.prompt("Data width (bits)", type=int, default=8)
+            dataflow = typer.prompt("Dataflow pattern", default="weight_stationary")
+            
+            template = SystolicArray(
+                rows=rows,
+                cols=cols,
+                data_width=data_width,
+                dataflow=dataflow
+            )
+            
+        elif template_type == "vector_processor":
+            vector_length = typer.prompt("Vector length", type=int, default=512)
+            num_lanes = typer.prompt("Number of lanes", type=int, default=8)
+            data_width = typer.prompt("Data width (bits)", type=int, default=32)
+            
+            template = VectorProcessor(
+                vector_length=vector_length,
+                num_lanes=num_lanes,
+                data_width=data_width
+            )
+            
+        elif template_type == "transformer":
+            seq_length = typer.prompt("Max sequence length", type=int, default=2048)
+            embedding_dim = typer.prompt("Embedding dimension", type=int, default=768)
+            num_heads = typer.prompt("Number of heads", type=int, default=12)
+            precision = typer.prompt("Precision", default="fp16")
+            
+            template = TransformerAccelerator(
+                max_sequence_length=seq_length,
+                embedding_dim=embedding_dim,
+                num_heads=num_heads,
+                precision=precision
+            )
+            
+        elif template_type == "custom":
+            template = CustomTemplate(
+                name=name,
+                description=f"Custom {name} accelerator"
+            )
+            
+            # Interactive configuration
+            add_ops = typer.confirm("Add custom operations?")
+            if add_ops:
+                while True:
+                    op_name = typer.prompt("Operation name")
+                    latency = typer.prompt("Latency (cycles)", type=int)
+                    throughput = typer.prompt("Throughput (ops/cycle)", type=int)
+                    description = typer.prompt("Description", default="")
+                    
+                    template.add_operation(
+                        name=op_name,
+                        inputs=["vector", "vector"],
+                        outputs=["vector"],
+                        latency=latency,
+                        throughput=throughput,
+                        description=description
+                    )
+                    
+                    if not typer.confirm("Add another operation?"):
+                        break
+        
+        else:
+            console.print(f"[bold red]Unknown template type: {template_type}[/bold red]")
+            raise typer.Exit(1)
+        
+        # Generate RTL
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console
+        ) as progress:
+            task = progress.add_task("Generating template...", total=None)
+            
+            rtl_path = template.generate_rtl(output_dir)
+            
+            progress.update(task, completed=True)
+        
+        console.print(f"[bold green]Template created successfully![/bold green]")
+        console.print(f"RTL generated: {rtl_path}")
+        
+        # Show template info
+        console.print(f"Template: {template}")
+        
+        # Generate additional files for some templates
+        if hasattr(template, 'generate_compiler_support'):
+            compiler_files = template.generate_compiler_support(f"{output_dir}/compiler")
+            console.print("Compiler support generated:")
+            for file_type, path in compiler_files.items():
+                console.print(f"  • {file_type}: {path}")
+        
+        if hasattr(template, 'estimate_resources'):
+            resources = template.estimate_resources()
+            console.print(f"Estimated resources: {resources}")
+        
+    except Exception as e:
+        console.print(f"[bold red]Template creation failed: {e}[/bold red]")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

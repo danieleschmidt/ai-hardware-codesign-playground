@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 
 from ..utils.logging import get_logger, get_performance_logger
+from ..utils.monitoring import get_system_monitor, record_metric, monitor_function
 from .cache import cached, get_thread_pool
 
 logger = get_logger(__name__)
@@ -117,6 +118,9 @@ class PerformanceProfiler:
         with self._lock:
             self._active_operations[operation_id] = start_data
         
+        # Record operation start in monitoring system
+        record_metric(f"operation_{operation_name}_started", 1, "counter")
+        
         logger.debug(
             "Started operation tracking",
             operation_name=operation_name,
@@ -174,6 +178,12 @@ class PerformanceProfiler:
         # Store metrics
         with self._lock:
             self._metrics_history[start_data["operation_name"]].append(metrics)
+        
+        # Record operation completion in monitoring system
+        status = "success" if success else "error"
+        record_metric(f"operation_{start_data['operation_name']}_completed", 1, "counter", {"status": status})
+        record_metric(f"operation_{start_data['operation_name']}_duration", duration, "timer")
+        record_metric(f"operation_{start_data['operation_name']}_memory", memory_used, "gauge")
         
         logger.info(
             "Completed operation tracking",

@@ -9,6 +9,8 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass
 import numpy as np
 from .accelerator import Accelerator, ModelProfile
+from ..utils.monitoring import record_metric, monitor_function
+from ..utils.validation import validate_inputs, validate_model, SecurityValidator
 
 
 @dataclass
@@ -48,6 +50,8 @@ class ModelOptimizer:
         self.accelerator = accelerator
         self.optimization_history = []
         
+    @monitor_function("model_co_optimization")
+    @validate_inputs
     def co_optimize(
         self,
         target_fps: float,
@@ -67,6 +71,24 @@ class ModelOptimizer:
         Returns:
             OptimizationResult with optimized model and accelerator
         """
+        # Input validation
+        if target_fps <= 0:
+            raise ValueError("target_fps must be positive")
+        if power_budget <= 0:
+            raise ValueError("power_budget must be positive")
+        if iterations <= 0:
+            raise ValueError("iterations must be positive")
+        if optimization_strategy not in ["performance", "power", "balanced"]:
+            raise ValueError("optimization_strategy must be one of: performance, power, balanced")
+        
+        # Security validation
+        security_validator = SecurityValidator()
+        if not security_validator.validate_numeric_input(target_fps, "target_fps", min_value=0.1, max_value=1000):
+            raise ValueError("Invalid target_fps value")
+        if not security_validator.validate_numeric_input(power_budget, "power_budget", min_value=0.1, max_value=100):
+            raise ValueError("Invalid power_budget value")
+        
+        record_metric("co_optimization_started", 1, "counter", {"strategy": optimization_strategy})
         import time
         start_time = time.time()
         
@@ -100,7 +122,7 @@ class ModelOptimizer:
         optimization_time = time.time() - start_time
         best_model, best_accelerator, best_metrics = best_design
         
-        return OptimizationResult(
+        result = OptimizationResult(
             optimized_model=best_model,
             optimized_accelerator=best_accelerator,
             metrics=best_metrics,
@@ -108,6 +130,12 @@ class ModelOptimizer:
             convergence_history=convergence_history,
             optimization_time=optimization_time,
         )
+        
+        record_metric("co_optimization_completed", 1, "counter", {"strategy": optimization_strategy})
+        record_metric("co_optimization_time", optimization_time, "timer")
+        record_metric("co_optimization_best_score", best_score, "gauge")
+        
+        return result
     
     def apply_hardware_constraints(self, model: Any, constraints: Dict[str, Any]) -> Any:
         """
