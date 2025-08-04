@@ -348,7 +348,8 @@ class DesignSpaceExplorer:
                     design_point = future.result()
                     design_points.append(design_point)
                 except Exception as exc:
-                    print(f"Design evaluation failed for {config}: {exc}")
+                    logger.error(f"Design evaluation failed for {config}", exception=exc)
+                    record_metric("design_evaluation_failed", 1, "counter")
         
         return design_points
     
@@ -359,8 +360,12 @@ class DesignSpaceExplorer:
         objectives: List[str]
     ) -> DesignPoint:
         """Evaluate a single design configuration."""
-        # Create accelerator from config
-        accelerator = self._config_to_accelerator(config)
+        try:
+            # Create accelerator from config
+            accelerator = self._config_to_accelerator(config)
+        except Exception as e:
+            logger.error(f"Failed to create accelerator from config: {config}", exception=e)
+            raise
         
         # Get performance metrics
         performance = accelerator.estimate_performance()
@@ -385,12 +390,16 @@ class DesignSpaceExplorer:
                 # Default: try to get from performance dict
                 metrics[objective] = performance.get(objective, 0.0)
         
-        return DesignPoint(
+        design_point = DesignPoint(
             config=config,
             metrics=metrics,
             accelerator=accelerator,
             model=model
         )
+        
+        record_metric("design_point_evaluated", 1, "counter")
+        
+        return design_point
     
     def _config_to_accelerator(self, config: Dict[str, Any]) -> Accelerator:
         """Convert configuration dictionary to Accelerator object."""

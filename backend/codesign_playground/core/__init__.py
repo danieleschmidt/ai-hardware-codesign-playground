@@ -9,6 +9,10 @@ from .accelerator import AcceleratorDesigner, Accelerator, ModelProfile
 from .optimizer import ModelOptimizer, OptimizationResult
 from .explorer import DesignSpaceExplorer, DesignSpaceResult
 from .workflow import Workflow
+from .hardware_modeling import (
+    CycleAccurateSimulator, PowerAnalyzer, AreaEstimator, PerformanceOptimizer,
+    HardwareMetrics, PowerReport, AreaReport, SimulationBackend
+)
 
 __all__ = [
     "AcceleratorDesigner",
@@ -19,4 +23,12 @@ __all__ = [
     "DesignSpaceExplorer",
     "DesignSpaceResult",
     "Workflow",
+    "CycleAccurateSimulator",
+    "PowerAnalyzer", 
+    "AreaEstimator",
+    "PerformanceOptimizer",
+    "HardwareMetrics",
+    "PowerReport",
+    "AreaReport",
+    "SimulationBackend",
 ]

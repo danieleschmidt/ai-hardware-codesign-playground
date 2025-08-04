@@ -526,3 +526,285 @@ def validate_json_config(config_str: str, schema: Optional[Dict[str, Any]] = Non
         result.add_error(f"Configuration validation failed: {e}")
     
     return result
+
+
+class SecurityValidator(BaseValidator):
+    """Validator for security-related configurations and inputs."""
+    
+    DANGEROUS_PATTERNS = [
+        r'eval\s*\(',
+        r'exec\s*\(',
+        r'__import__',
+        r'open\s*\(',
+        r'file\s*\(',
+        r'input\s*\(',
+        r'raw_input\s*\(',
+    ]
+    
+    def validate_user_input(self, user_input: str, field_name: str = "input") -> ValidationResult:
+        """
+        Validate user input for security threats.
+        
+        Args:
+            user_input: User provided input string
+            field_name: Name of the input field
+            
+        Returns:
+            ValidationResult with security validation results
+        """
+        result = ValidationResult(is_valid=True, errors=[], warnings=[])
+        
+        # Check for dangerous patterns
+        for pattern in self.DANGEROUS_PATTERNS:
+            if re.search(pattern, user_input, re.IGNORECASE):
+                result.add_error(f"Potentially dangerous pattern detected in {field_name}")
+        
+        # Check for SQL injection patterns
+        sql_patterns = [
+            r'union\s+select',
+            r'drop\s+table',
+            r'delete\s+from',
+            r'insert\s+into',
+            r'update\s+.*set',
+            r"'\s*or\s*'.*'\s*=\s*'",
+            r'"\s*or\s*".*"\s*=\s*"',
+        ]
+        
+        for pattern in sql_patterns:
+            if re.search(pattern, user_input, re.IGNORECASE):
+                result.add_error(f"Potential SQL injection pattern in {field_name}")
+        
+        # Check for path traversal
+        if ".." in user_input or user_input.startswith("/"):
+            result.add_error(f"Potential path traversal in {field_name}")
+        
+        # Check input length
+        if len(user_input) > 10000:
+            result.add_error(f"Input too long: {len(user_input)} characters (max: 10000)")
+        
+        logger.info(f"Security validation completed for {field_name}: {result.is_valid}")
+        return result
+    
+    def validate_file_path_security(self, file_path: str, allowed_extensions: Optional[List[str]] = None) -> ValidationResult:
+        """
+        Validate file path for security issues.
+        
+        Args:
+            file_path: File path to validate
+            allowed_extensions: List of allowed file extensions
+            
+        Returns:
+            ValidationResult with security validation results
+        """
+        result = ValidationResult(is_valid=True, errors=[], warnings=[])
+        path = Path(file_path)
+        
+        # Check for path traversal
+        try:
+            resolved_path = path.resolve()
+            if ".." in str(resolved_path):
+                result.add_error("Path traversal detected in file path")
+        except Exception as e:
+            result.add_error(f"Invalid file path: {e}")
+        
+        # Check file extension
+        if allowed_extensions:
+            if path.suffix.lower() not in [ext.lower() for ext in allowed_extensions]:
+                result.add_error(f"File extension {path.suffix} not allowed")
+        
+        # Check for suspicious filenames
+        suspicious_names = ["config", "passwd", "shadow", ".env", ".ssh"]
+        if any(suspicious in path.name.lower() for suspicious in suspicious_names):
+            result.add_warning("Potentially sensitive filename detected")
+        
+        return result
+
+
+class EnhancedModelValidator(ModelValidator):
+    """Enhanced model validator with additional security and robustness checks."""
+    
+    MAX_MODEL_SIZE_MB = 2048  # 2GB limit
+    
+    def _validate_impl(self, model_config: Dict[str, Any], result: ValidationResult) -> None:
+        """Enhanced model validation with security checks."""
+        super()._validate_impl(model_config, result)
+        
+        # Additional security validation
+        security_validator = SecurityValidator()
+        
+        model_path = model_config.get("path", "")
+        if model_path:
+            sec_result = security_validator.validate_file_path_security(
+                model_path, self.SUPPORTED_FORMATS
+            )
+            result.errors.extend(sec_result.errors)
+            result.warnings.extend(sec_result.warnings)
+            if not sec_result.is_valid:
+                result.is_valid = False
+        
+        # Validate model size
+        if model_path and Path(model_path).exists():
+            size_mb = Path(model_path).stat().st_size / (1024 * 1024)
+            if size_mb > self.MAX_MODEL_SIZE_MB:
+                result.add_error(f"Model file too large: {size_mb:.1f}MB (max: {self.MAX_MODEL_SIZE_MB}MB)")
+            elif size_mb > 500:
+                result.add_warning(f"Large model file: {size_mb:.1f}MB may cause performance issues")
+
+
+class EnhancedHardwareValidator(HardwareValidator):
+    """Enhanced hardware validator with comprehensive checks."""
+    
+    def _validate_impl(self, hw_config: Dict[str, Any], result: ValidationResult) -> None:
+        """Enhanced hardware validation with additional checks."""
+        super()._validate_impl(hw_config, result)
+        
+        # Additional validation for resource constraints
+        self._validate_resource_constraints(hw_config, result)
+        self._validate_compatibility(hw_config, result)
+    
+    def _validate_resource_constraints(self, hw_config: Dict[str, Any], result: ValidationResult) -> None:
+        """Validate resource constraints and feasibility."""
+        compute_units = hw_config.get("compute_units", 64)
+        frequency = hw_config.get("frequency_mhz", 200)
+        power_budget = hw_config.get("power_budget_w", 5.0)
+        
+        # Rough power estimation check
+        if isinstance(compute_units, int) and isinstance(frequency, (int, float)) and isinstance(power_budget, (int, float)):
+            estimated_power = compute_units * frequency * 0.001  # Rough estimate
+            if estimated_power > power_budget:
+                result.add_warning(
+                    f"Estimated power ({estimated_power:.2f}W) may exceed budget ({power_budget}W)"
+                )
+    
+    def _validate_compatibility(self, hw_config: Dict[str, Any], result: ValidationResult) -> None:
+        """Validate compatibility between configuration parameters."""
+        dataflow = hw_config.get("dataflow")
+        precision = hw_config.get("precision")
+        
+        # Check dataflow-precision compatibility
+        if dataflow == "weight_stationary" and precision in ["fp32", "fp16"]:
+            result.add_warning(
+                "Weight stationary dataflow with floating point may require more memory"
+            )
+
+
+# Validation decorators for robust error handling
+def validate_model_input(func):
+    """Decorator to validate model inputs with comprehensive checks."""
+    def wrapper(*args, **kwargs):
+        # Extract model path and input shape from arguments
+        model_validator = EnhancedModelValidator()
+        
+        if 'model_path' in kwargs:
+            model_config = {'path': kwargs['model_path']}
+            model_result = model_validator.validate(model_config)
+            if not model_result.is_valid:
+                raise ValidationError(f"Model validation failed: {'; '.join(model_result.errors)}")
+        
+        if 'input_shape' in kwargs:
+            # Validate input shape format and values
+            input_shape = kwargs['input_shape']
+            if isinstance(input_shape, str):
+                try:
+                    shape_dims = tuple(map(int, input_shape.split(',')))
+                    if any(dim <= 0 for dim in shape_dims):
+                        raise ValidationError("All input dimensions must be positive")
+                    if len(shape_dims) > 5:
+                        raise ValidationError("Too many dimensions in input shape")
+                except ValueError as e:
+                    raise ValidationError(f"Invalid input shape format: {e}")
+        
+        return func(*args, **kwargs)
+    
+    return wrapper
+
+
+def validate_hardware_config(func):
+    """Decorator to validate hardware configuration with enhanced checks."""
+    def wrapper(*args, **kwargs):
+        hardware_validator = EnhancedHardwareValidator()
+        
+        # Look for hardware configuration in kwargs
+        config_keys = ['config', 'hardware_config', 'accelerator_config']
+        for key in config_keys:
+            if key in kwargs and isinstance(kwargs[key], dict):
+                result = hardware_validator.validate(kwargs[key])
+                if not result.is_valid:
+                    raise ValidationError(f"Hardware config validation failed: {'; '.join(result.errors)}")
+        
+        return func(*args, **kwargs)
+    
+    return wrapper
+
+
+def validate_security(func):
+    """Decorator to validate security of inputs."""
+    def wrapper(*args, **kwargs):
+        security_validator = SecurityValidator()
+        
+        # Validate string inputs
+        for key, value in kwargs.items():
+            if isinstance(value, str) and len(value) > 0:
+                result = security_validator.validate_user_input(value, key)
+                if not result.is_valid:
+                    raise ValidationError(f"Security validation failed for {key}: {'; '.join(result.errors)}")
+        
+        return func(*args, **kwargs)
+    
+    return wrapper
+
+
+def validate_json_config_enhanced(config_str: str, schema: Optional[Dict[str, Any]] = None) -> ValidationResult:
+    """
+    Enhanced JSON configuration validation with security checks.
+    
+    Args:
+        config_str: JSON configuration string
+        schema: Optional schema for validation
+        
+    Returns:
+        ValidationResult with comprehensive validation
+    """
+    result = ValidationResult(is_valid=True, errors=[], warnings=[])
+    
+    try:
+        # Security check first
+        security_validator = SecurityValidator()
+        sec_result = security_validator.validate_user_input(config_str, "config")
+        result.errors.extend(sec_result.errors)
+        result.warnings.extend(sec_result.warnings)
+        if not sec_result.is_valid:
+            result.is_valid = False
+            return result
+        
+        config = json.loads(config_str)
+        
+        # Check for reasonable config size
+        if len(config_str) > 1_000_000:  # 1MB limit
+            result.add_error(f"Configuration too large: {len(config_str)} bytes")
+        
+        # Check nesting depth
+        def get_depth(obj, current_depth=0):
+            if isinstance(obj, dict):
+                return max([get_depth(v, current_depth + 1) for v in obj.values()] or [current_depth])
+            elif isinstance(obj, list):
+                return max([get_depth(item, current_depth + 1) for item in obj] or [current_depth])
+            return current_depth
+        
+        depth = get_depth(config)
+        if depth > 10:
+            result.add_warning(f"Deep nesting detected: {depth} levels")
+        
+        if schema:
+            validator = ConfigValidator(schema)
+            schema_result = validator.validate(config)
+            result.errors.extend(schema_result.errors)
+            result.warnings.extend(schema_result.warnings)
+            result.is_valid = result.is_valid and schema_result.is_valid
+        
+    except json.JSONDecodeError as e:
+        result.add_error(f"Invalid JSON: {e}")
+    except Exception as e:
+        result.add_error(f"Configuration validation error: {e}")
+    
+    return result

@@ -15,6 +15,11 @@ from enum import Enum
 from .accelerator import AcceleratorDesigner, Accelerator, ModelProfile
 from .optimizer import ModelOptimizer, OptimizationResult
 from .explorer import DesignSpaceExplorer, DesignSpaceResult
+from ..utils.monitoring import record_metric, monitor_function, get_health_status
+from ..utils.validation import validate_inputs, SecurityValidator
+from ..utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class WorkflowStage(Enum):
@@ -119,6 +124,8 @@ class Workflow:
         
         self.state.add_message(f"Initialized workflow '{name}'")
     
+    @monitor_function("workflow_model_import")
+    @validate_inputs
     def import_model(
         self, 
         model_path: str, 
@@ -133,6 +140,20 @@ class Workflow:
             input_shapes: Input tensor shapes
             framework: ML framework ("pytorch", "tensorflow", "onnx", "auto")
         """
+        # Input validation and security checks
+        security_validator = SecurityValidator()
+        if not security_validator.validate_file_path(model_path):
+            raise ValueError("Invalid or unsafe model path")
+        
+        if not input_shapes:
+            raise ValueError("input_shapes cannot be empty")
+        
+        # Validate framework
+        valid_frameworks = ["pytorch", "tensorflow", "onnx", "auto"]
+        if framework not in valid_frameworks:
+            raise ValueError(f"framework must be one of: {valid_frameworks}")
+        
+        record_metric("workflow_model_import_started", 1, "counter", {"framework": framework})
         self.state.update_progress(WorkflowStage.MODEL_IMPORT, 0.1)
         self.state.add_message(f"Importing model from {model_path}")
         
@@ -170,6 +191,8 @@ class Workflow:
             json.dump(self.model_profile.to_dict(), f, indent=2)
         self.state.artifacts["model_profile"] = str(profile_path)
     
+    @monitor_function("workflow_hardware_mapping")
+    @validate_inputs
     def map_to_hardware(
         self,
         template: str = "systolic_array",
@@ -186,6 +209,19 @@ class Workflow:
             precision: Numerical precision
             **kwargs: Additional template parameters
         """
+        # Input validation
+        valid_templates = ["systolic_array", "vector_processor"]
+        if template not in valid_templates:
+            raise ValueError(f"template must be one of: {valid_templates}")
+            
+        if not isinstance(size, tuple) or len(size) < 1:
+            raise ValueError("size must be a non-empty tuple")
+            
+        valid_precisions = ["int8", "int16", "fp16", "fp32"]
+        if precision not in valid_precisions:
+            raise ValueError(f"precision must be one of: {valid_precisions}")
+        
+        record_metric("workflow_hardware_mapping_started", 1, "counter", {"template": template})
         if not self.model_profile:
             raise RuntimeError("Must import model before hardware mapping")
         
@@ -278,6 +314,8 @@ class Workflow:
             json.dump(compile_info, f, indent=2)
         self.state.artifacts["compilation_info"] = str(compile_path)
     
+    @monitor_function("workflow_simulation")
+    @validate_inputs
     def simulate(
         self,
         testbench: str,
@@ -295,6 +333,15 @@ class Workflow:
         Returns:
             Performance metrics
         """
+        # Input validation
+        if not testbench:
+            raise ValueError("testbench cannot be empty")
+        if cycles_limit <= 0:
+            raise ValueError("cycles_limit must be positive")
+        if cycles_limit > 100000000:  # 100M cycle limit for safety
+            raise ValueError("cycles_limit too large (max: 100M)")
+        
+        record_metric("workflow_simulation_started", 1, "counter")
         if not self.model or not self.accelerator:
             raise RuntimeError("Must compile before simulation")
         
@@ -331,6 +378,10 @@ class Workflow:
         with open(metrics_path, 'w') as f:
             json.dump(metrics.to_dict(), f, indent=2)
         self.state.artifacts["simulation_metrics"] = str(metrics_path)
+        
+        record_metric("workflow_simulation_completed", 1, "counter")
+        record_metric("workflow_simulation_fps", metrics.images_per_second, "gauge")
+        record_metric("workflow_simulation_power", metrics.average_power, "gauge")
         
         return metrics
     
