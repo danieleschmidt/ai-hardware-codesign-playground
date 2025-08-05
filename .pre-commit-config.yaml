@@ -1,4 +1,5 @@
-# Pre-commit hooks configuration
+```yaml
+# Pre-commit hooks configuration for AI Hardware Co-Design Playground
 # See https://pre-commit.com for more information
 # Install: pre-commit install
 # Update: pre-commit autoupdate
@@ -17,18 +18,26 @@ repos:
       - id: check-toml
       - id: check-xml
       - id: check-added-large-files
-        args: [--maxkb=5000]
+        args: [--maxkb=10000]
       - id: check-case-conflict
       - id: check-merge-conflict
+      - id: check-symlinks
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
       - id: fix-byte-order-marker
+      - id: detect-private-key
+      - id: detect-aws-credentials
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: pretty-format-json
         args: [--autofix, --indent=2]
       - id: no-commit-to-branch
         args: [--branch, main, --branch, master]
+      - id: name-tests-test
+        args: ['--pytest-test-first']
+      - id: requirements-txt-fixer
+      - id: sort-simple-yaml
+      - id: file-contents-sorter
 
   # Python code formatting
   - repo: https://github.com/psf/black
@@ -36,44 +45,61 @@ repos:
     hooks:
       - id: black
         language_version: python3
-        args: [--line-length=88]
+        args: ['--config=pyproject.toml']
 
   # Python import sorting
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
-        args: [--profile=black, --line-length=88]
+        args: ['--profile=black', '--line-length=88']
 
   # Python linting with Ruff (faster alternative to flake8)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.6
+    rev: v0.1.9
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: ['--fix', '--exit-non-zero-on-fix', '--config=pyproject.toml']
+      - id: ruff-format
+        args: ['--config=pyproject.toml']
 
-  # Python security checks
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.5
-    hooks:
-      - id: bandit
-        args: [-c, pyproject.toml]
-        additional_dependencies: ["bandit[toml]"]
-
-  # Type checking
+  # Python type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.1
+    rev: v1.8.0
     hooks:
       - id: mypy
-        additional_dependencies: [types-all]
-        args: [--config-file=pyproject.toml]
+        additional_dependencies: [
+          'types-all',
+          'types-PyYAML',
+          'types-requests',
+          'types-setuptools',
+          'pydantic',
+          'numpy',
+          'pandas-stubs'
+        ]
+        args: ['--config-file=pyproject.toml']
 
-  # Dependency security scanning
+  # Security scanning
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.6
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml']
+        additional_dependencies: ['bandit[toml]']
+
+  # Python security checks
   - repo: https://github.com/Lucas-C/pre-commit-hooks-safety
     rev: v1.3.2
     hooks:
       - id: python-safety-dependencies-check
         args: [--disable-optional-telemetry]
+
+  # Python docstring formatting
+  - repo: https://github.com/pycqa/pydocstyle
+    rev: 6.3.0
+    hooks:
+      - id: pydocstyle
+        args: ['--convention=google']
 
   # YAML/JSON formatting
   - repo: https://github.com/pre-commit/mirrors-prettier
@@ -83,14 +109,61 @@ repos:
         types_or: [yaml, json, markdown]
         exclude: ^(package-lock\.json|.*\.min\.(js|css))$
 
+  # YAML/JSON/TOML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        args: ['-d', 'relaxed']
+
   # Shell script linting
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.9.0.6
     hooks:
       - id: shellcheck
-        args: [-e, SC1091, -e, SC2154]
+        args: ['--severity=warning', '-e', 'SC1091', '-e', 'SC2154']
 
-  # Conventional commit message enforcement
+  # Dockerfile linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint
+        args: ['--ignore', 'DL3008', '--ignore', 'DL3009']
+
+  # Documentation checks
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.39.0
+    hooks:
+      - id: markdownlint
+        args: ['--config', '.markdownlint.json', '--fix']
+
+  # License headers
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.4
+    hooks:
+      - id: insert-license
+        files: \.py$
+        args:
+          - --license-filepath
+          - LICENSE_HEADER.txt
+          - --comment-style
+          - '#'
+
+  # Jupyter notebook cleaning
+  - repo: https://github.com/nbQA-dev/nbQA
+    rev: 1.7.1
+    hooks:
+      - id: nbqa-black
+      - id: nbqa-isort
+      - id: nbqa-ruff
+
+  # Jupyter notebook output clearing
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.6.1
+    hooks:
+      - id: nbstripout
+
+  # Git conventional commits
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v3.0.0
     hooks:
@@ -102,19 +175,47 @@ repos:
     rev: v1.4.0
     hooks:
       - id: detect-secrets
-        args: [--baseline, .secrets.baseline]
+        args: ['--baseline', '.secrets.baseline']
 
-  # Documentation checks
-  - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.38.0
+  # Check for merge conflicts in specific files
+  - repo: local
     hooks:
-      - id: markdownlint
-        args: [--config, .markdownlint.json, --fix]
+      - id: check-no-merge-conflict-markers
+        name: Check for merge conflict markers
+        entry: bash -c 'git diff --check'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  # Custom hook for hardware files
+  - repo: local
+    hooks:
+      - id: verilog-lint
+        name: Verilog/SystemVerilog linting
+        entry: bash -c 'find . -name "*.v" -o -name "*.sv" | head -10 | xargs -r verilator --lint-only --Wall 2>/dev/null || true'
+        language: system
+        files: \.(v|sv)$
+        pass_filenames: false
+
+  # Documentation generation
+  - repo: local
+    hooks:
+      - id: update-readme-toc
+        name: Update README table of contents
+        entry: bash -c 'which markdown-toc >/dev/null 2>&1 && markdown-toc -i README.md || true'
+        language: system
+        files: README\.md$
+        pass_filenames: false
 
 # Configuration for specific checks
 default_language_version:
   python: python3.9
   node: 18.17.0
+
+# Pre-commit configuration
+default_stages: [commit]
+fail_fast: true
+minimum_pre_commit_version: '3.0.0'
 
 # Exclude patterns
 exclude: |
@@ -142,6 +243,8 @@ ci:
     for more information, see https://pre-commit.ci
   autofix_prs: true
   autoupdate_branch: main
-  autoupgrade_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
   autoupdate_schedule: weekly
+  skip: []
   submodules: false
+```
