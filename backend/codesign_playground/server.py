@@ -32,7 +32,6 @@ from .utils.monitoring import get_system_monitor, record_metric, get_health_stat
 from .utils.validation import SecurityValidator, validate_inputs
 from .utils.logging import get_logger
 from .utils.exceptions import ValidationError, SecurityError
-from .api_sentiment import router as sentiment_router
 
 logger = get_logger(__name__)
 
@@ -59,16 +58,13 @@ async def lifespan(app: FastAPI):
 
 # FastAPI app configuration with enhanced security
 app = FastAPI(
-    title="AI Hardware Co-Design Playground API with Sentiment Analysis",
-    description="Interactive environment for co-optimizing neural networks and hardware accelerators, with integrated sentiment analysis capabilities",
+    title="AI Hardware Co-Design Playground API",
+    description="Interactive environment for co-optimizing neural networks and hardware accelerators",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
 )
-
-# Include sentiment analysis router
-app.include_router(sentiment_router)
 
 # Security middleware
 app.add_middleware(

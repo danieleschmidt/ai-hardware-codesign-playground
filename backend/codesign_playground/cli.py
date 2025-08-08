@@ -18,17 +18,12 @@ from .core import (AcceleratorDesigner, ModelOptimizer, DesignSpaceExplorer, Wor
                   CycleAccurateSimulator, PowerAnalyzer, AreaEstimator, PerformanceOptimizer,
                   SimulationBackend)
 from .templates import SystolicArray, VectorProcessor, TransformerAccelerator, CustomTemplate
-from .sentiment_analyzer import SentimentAnalyzerAPI
-from .cli_sentiment import sentiment
 
 app = typer.Typer(
     name="codesign-playground",
-    help="AI Hardware Co-Design Playground with Sentiment Analysis - Interactive environment for neural network and hardware accelerator co-optimization",
+    help="AI Hardware Co-Design Playground - Interactive environment for neural network and hardware accelerator co-optimization",
     add_completion=False
 )
-
-# Add sentiment analysis commands as a subcommand group
-app.add_typer(sentiment, name="sentiment", help="Sentiment Analysis commands")
 
 console = Console()
 
