@@ -12,6 +12,9 @@ import json
 from dataclasses import dataclass
 
 from .exceptions import ValidationError
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -582,7 +585,6 @@ class SecurityValidator(BaseValidator):
         if len(user_input) > 10000:
             result.add_error(f"Input too long: {len(user_input)} characters (max: 10000)")
         
-        logger.info(f"Security validation completed for {field_name}: {result.is_valid}")
         return result
     
     def validate_file_path_security(self, file_path: str, allowed_extensions: Optional[List[str]] = None) -> ValidationResult:
