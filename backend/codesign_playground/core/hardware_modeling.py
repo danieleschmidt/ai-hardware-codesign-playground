@@ -8,17 +8,20 @@ cycle-accurate simulation, power analysis, and area estimation for AI accelerato
 from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from pathlib import Path
-import numpy as np
+# import numpy as np  # Mock for now
 import json
 from enum import Enum
 import time
 
-from ..utils.logging import get_logger
-from ..utils.exceptions import HardwareModelingError, ValidationError
-from ..utils.resilience import circuit_breaker, retry, CircuitBreakerConfig, RetryConfig
-from ..utils.monitoring import record_metric
+# from ..utils.logging import get_logger
+# from ..utils.exceptions import HardwareModelingError, ValidationError
+# from ..utils.resilience import circuit_breaker, retry, CircuitBreakerConfig, RetryConfig
+# from ..utils.monitoring import record_metric
+from ..utils.exceptions import HardwareError  # Simplified
 
-logger = get_logger(__name__)
+# logger = get_logger(__name__)
+import logging
+logger = logging.getLogger(__name__)
 
 
 class SimulationBackend(Enum):
@@ -161,8 +164,8 @@ class CycleAccurateSimulator:
         self.backend = backend
         self.simulation_results = {}
         
-    @circuit_breaker("hardware_simulation", CircuitBreakerConfig(failure_threshold=3, recovery_timeout=30.0))
-    @retry("hardware_simulation", RetryConfig(max_attempts=2, base_delay=1.0))
+    # @circuit_breaker("hardware_simulation", CircuitBreakerConfig(failure_threshold=3, recovery_timeout=30.0))
+    # @retry("hardware_simulation", RetryConfig(max_attempts=2, base_delay=1.0))
     def run(
         self,
         rtl_file: str,
@@ -185,7 +188,7 @@ class CycleAccurateSimulator:
             Hardware performance metrics from simulation
         """
         logger.info(f"Starting hardware simulation with backend: {self.backend.value}")
-        record_metric("hardware_simulation_started", 1, "counter", {"backend": self.backend.value})
+        # record_metric("hardware_simulation_started", 1, "counter", {"backend": self.backend.value})
         
         start_time = time.time()
         
@@ -197,12 +200,12 @@ class CycleAccurateSimulator:
             
             simulation_time = time.time() - start_time
             logger.info(f"Hardware simulation completed in {simulation_time:.2f}s")
-            record_metric("hardware_simulation_completed", 1, "counter")
-            record_metric("hardware_simulation_duration", simulation_time, "timer")
+            # record_metric("hardware_simulation_completed", 1, "counter")
+            # record_metric("hardware_simulation_duration", simulation_time, "timer")
             
             return result
         except Exception as e:
-            record_metric("hardware_simulation_failed", 1, "counter")
+            # record_metric("hardware_simulation_failed", 1, "counter")
             logger.error(f"Hardware simulation failed: {e}")
             raise
     

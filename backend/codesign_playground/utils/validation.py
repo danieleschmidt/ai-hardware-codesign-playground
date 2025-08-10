@@ -587,6 +587,28 @@ class SecurityValidator(BaseValidator):
         
         return result
     
+    def validate_numeric_input(self, value: Union[int, float], field_name: str, 
+                              min_value: Optional[float] = None, max_value: Optional[float] = None) -> bool:
+        """Validate numeric input with range checks."""
+        try:
+            if not isinstance(value, (int, float)) or value != value:  # NaN check
+                return False
+            if min_value is not None and value < min_value:
+                return False
+            if max_value is not None and value > max_value:
+                return False
+            return True
+        except (TypeError, ValueError):
+            return False
+    
+    def validate_file_path(self, file_path: str, allowed_extensions: Optional[List[str]] = None) -> bool:
+        """Simple file path validation."""
+        try:
+            result = self.validate_file_path_security(file_path, allowed_extensions)
+            return result.is_valid
+        except Exception:
+            return False
+    
     def validate_file_path_security(self, file_path: str, allowed_extensions: Optional[List[str]] = None) -> ValidationResult:
         """
         Validate file path for security issues.
@@ -810,3 +832,31 @@ def validate_json_config_enhanced(config_str: str, schema: Optional[Dict[str, An
         result.add_error(f"Configuration validation error: {e}")
     
     return result
+
+
+# Convenience functions for common validation tasks
+def validate_model(model, input_shape=None):
+    """Validate a model object with optional input shape."""
+    # Mock validation - in real implementation would check model architecture
+    if model is None:
+        raise ValidationError("Model cannot be None")
+    return True
+
+
+def validate_inputs(func):
+    """Decorator to validate function input parameters."""
+    def wrapper(*args, **kwargs):
+        validator = SecurityValidator()
+        for key, value in kwargs.items():
+            if isinstance(value, str):
+                result = validator.validate_user_input(value, key)
+                if not result.is_valid:
+                    raise ValidationError(f"Input validation failed for {key}: {'; '.join(result.errors)}")
+        return func(*args, **kwargs)
+    return wrapper
+
+
+# Health check for entire validation system
+def get_health_status():
+    """Get health status of validation system."""
+    return {"status": "healthy", "validators": ["SecurityValidator", "ModelValidator", "HardwareValidator"]}

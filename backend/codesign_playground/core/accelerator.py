@@ -9,7 +9,10 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 import json
-import numpy as np
+import hashlib
+import threading
+from concurrent.futures import ThreadPoolExecutor
+# import numpy as np  # Mock for now
 
 
 @dataclass
@@ -176,6 +179,19 @@ class AcceleratorDesigner:
         self.supported_frameworks = ["pytorch", "tensorflow", "onnx"]
         self.dataflow_options = ["weight_stationary", "output_stationary", "row_stationary"]
         self.memory_options = ["sram_32kb", "sram_64kb", "sram_128kb", "dram"]
+        
+        # Performance optimization
+        self._cache = {}
+        self._cache_lock = threading.RLock()
+        self._thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="accelerator_design")
+        
+        # Design optimization statistics
+        self.design_stats = {
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "parallel_designs": 0,
+            "total_designs": 0
+        }
     
     def profile_model(self, model: Any, input_shape: Tuple[int, ...]) -> ModelProfile:
         """
@@ -188,6 +204,16 @@ class AcceleratorDesigner:
         Returns:
             ModelProfile with computational characteristics
         """
+        # Create cache key from model and input shape
+        model_hash = self._hash_model_and_shape(model, input_shape)
+        
+        with self._cache_lock:
+            if model_hash in self._cache:
+                self.design_stats["cache_hits"] += 1
+                return self._cache[model_hash]
+            else:
+                self.design_stats["cache_misses"] += 1
+        
         # Mock profiling - in real implementation would analyze actual model
         operations = self._estimate_operations(input_shape)
         parameters = self._estimate_parameters(input_shape)
@@ -198,7 +224,7 @@ class AcceleratorDesigner:
         bandwidth_gb_s = peak_gflops * 4 / 1024  # Rough estimate
         compute_intensity = peak_gflops / bandwidth_gb_s if bandwidth_gb_s > 0 else 0
         
-        return ModelProfile(
+        profile = ModelProfile(
             peak_gflops=peak_gflops,
             bandwidth_gb_s=bandwidth_gb_s,
             operations=operations,
@@ -208,6 +234,12 @@ class AcceleratorDesigner:
             layer_types=["conv2d", "dense", "activation"],
             model_size_mb=memory_mb,
         )
+        
+        # Cache the result
+        with self._cache_lock:
+            self._cache[model_hash] = profile
+        
+        return profile
     
     def design(
         self,
@@ -308,3 +340,80 @@ class AcceleratorDesigner:
             128 * 512 +         # Dense layer
             512 * 1000          # Classification layer
         )
+    
+    def _hash_model_and_shape(self, model: Any, input_shape: Tuple[int, ...]) -> str:
+        """Generate cache key from model and input shape."""
+        # Create a hash from model characteristics and input shape
+        model_str = str(getattr(model, 'path', repr(model)))
+        shape_str = str(input_shape)
+        combined = f"{model_str}_{shape_str}".encode('utf-8')
+        return hashlib.md5(combined).hexdigest()
+    
+    def design_parallel(
+        self,
+        configurations: List[Dict[str, Any]],
+        max_workers: Optional[int] = None
+    ) -> List[Accelerator]:
+        """
+        Design multiple accelerators in parallel for performance.
+        
+        Args:
+            configurations: List of design configurations
+            max_workers: Maximum parallel workers
+            
+        Returns:
+            List of designed accelerators
+        """
+        self.design_stats["parallel_designs"] += 1
+        
+        if max_workers is None:
+            max_workers = min(len(configurations), 4)
+        
+        # Use thread pool for parallel design
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_config = {
+                executor.submit(self._design_single_config, config): config
+                for config in configurations
+            }
+            
+            for future in future_to_config:
+                try:
+                    accelerator = future.result()
+                    results.append(accelerator)
+                except Exception as e:
+                    print(f"Design failed for config {future_to_config[future]}: {e}")
+                    # Add a placeholder or skip
+                    results.append(None)
+        
+        return [acc for acc in results if acc is not None]
+    
+    def _design_single_config(self, config: Dict[str, Any]) -> Accelerator:
+        """Design single accelerator from configuration."""
+        return self.design(
+            compute_units=config.get("compute_units", 64),
+            memory_hierarchy=config.get("memory_hierarchy", ["sram_64kb", "dram"]),
+            dataflow=config.get("dataflow", "weight_stationary"),
+            frequency_mhz=config.get("frequency_mhz", 200.0),
+            data_width=config.get("data_width", 8),
+            precision=config.get("precision", "int8"),
+            power_budget_w=config.get("power_budget_w", 5.0)
+        )
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get performance statistics."""
+        total_requests = self.design_stats["cache_hits"] + self.design_stats["cache_misses"]
+        cache_hit_rate = (self.design_stats["cache_hits"] / total_requests) if total_requests > 0 else 0
+        
+        return {
+            **self.design_stats,
+            "cache_hit_rate": cache_hit_rate,
+            "cache_size": len(self._cache)
+        }
+    
+    def clear_cache(self) -> None:
+        """Clear design cache."""
+        with self._cache_lock:
+            self._cache.clear()
+        self.design_stats["cache_hits"] = 0
+        self.design_stats["cache_misses"] = 0

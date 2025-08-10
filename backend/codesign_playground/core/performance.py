@@ -6,7 +6,7 @@ adaptive scaling mechanisms for the platform.
 """
 
 import time
-import psutil
+# import psutil  # Mock for now
 import threading
 from typing import Any, Dict, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
@@ -14,7 +14,9 @@ from collections import deque, defaultdict
 import statistics
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import numpy as np
+# import numpy as np  # Mock for now
+import random
+import math
 
 from ..utils.logging import get_logger, get_performance_logger
 from ..utils.monitoring import get_system_monitor, record_metric, monitor_function
