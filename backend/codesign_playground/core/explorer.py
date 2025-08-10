@@ -7,7 +7,7 @@ and hardware accelerators to find optimal configurations.
 
 from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass
-import numpy as np
+# import numpy as np  # Mock for now
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
@@ -77,6 +77,30 @@ class DesignSpaceExplorer:
         self.parallel_workers = parallel_workers
         self.designer = AcceleratorDesigner()
         self.evaluation_cache = {}
+        
+        # Auto-scaling configuration
+        self.auto_scaling = {
+            "enabled": True,
+            "min_workers": 2,
+            "max_workers": 16,
+            "target_load": 0.8,
+            "scale_up_threshold": 0.9,
+            "scale_down_threshold": 0.3,
+            "current_workers": parallel_workers
+        }
+        
+        # Resource pooling and load balancing
+        self._resource_pool = ThreadPoolExecutor(max_workers=parallel_workers, thread_name_prefix="design_explorer")
+        self._pool_lock = threading.RLock()
+        
+        # Performance metrics
+        self.performance_metrics = {
+            "total_explorations": 0,
+            "avg_exploration_time": 0.0,
+            "parallel_efficiency": 0.0,
+            "cache_hit_rate": 0.0,
+            "auto_scaling_events": 0
+        }
     
     def explore(
         self,
@@ -103,6 +127,10 @@ class DesignSpaceExplorer:
         """
         import time
         start_time = time.time()
+        self.performance_metrics["total_explorations"] += 1
+        
+        # Auto-scale based on workload size
+        self._auto_scale_workers(num_samples)
         
         # Generate design points based on strategy
         if strategy == "random":
@@ -488,3 +516,65 @@ class DesignSpaceExplorer:
                 mutated[param] = random.choice(values)
         
         return mutated
+    
+    def _auto_scale_workers(self, num_samples: int) -> None:
+        """Auto-scale worker pool based on workload."""
+        if not self.auto_scaling["enabled"]:
+            return
+        
+        # Calculate optimal workers based on workload
+        estimated_workers = min(
+            max(num_samples // 10, self.auto_scaling["min_workers"]),
+            self.auto_scaling["max_workers"]
+        )
+        
+        current_workers = self.auto_scaling["current_workers"]
+        if abs(estimated_workers - current_workers) > 1:
+            # Significant change needed
+            self._resource_pool.shutdown(wait=False)
+            self._resource_pool = ThreadPoolExecutor(
+                max_workers=estimated_workers, 
+                thread_name_prefix="design_explorer_scaled"
+            )
+            self.auto_scaling["current_workers"] = estimated_workers
+            self.performance_metrics["auto_scaling_events"] += 1
+    
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive performance metrics."""
+        # Calculate cache hit rate
+        cache_requests = len(self.evaluation_cache)
+        cache_hits = sum(1 for entry in self.evaluation_cache.values() if entry.get("hits", 0) > 0)
+        cache_hit_rate = cache_hits / cache_requests if cache_requests > 0 else 0.0
+        
+        self.performance_metrics["cache_hit_rate"] = cache_hit_rate
+        
+        return {
+            **self.performance_metrics,
+            "cache_size": len(self.evaluation_cache),
+            "current_workers": self.auto_scaling["current_workers"],
+            "designer_stats": self.designer.get_performance_stats()
+        }
+    
+    def optimize_resource_usage(self) -> Dict[str, Any]:
+        """Optimize resource usage and return recommendations."""
+        metrics = self.get_performance_metrics()
+        recommendations = []
+        
+        # Check cache efficiency
+        if metrics["cache_hit_rate"] < 0.3:
+            recommendations.append("Consider increasing cache size or TTL")
+        
+        # Check parallel efficiency
+        if metrics["parallel_efficiency"] < 0.7:
+            recommendations.append("Consider reducing parallel workers for better efficiency")
+        
+        # Check auto-scaling
+        if metrics["auto_scaling_events"] > 5:
+            recommendations.append("High auto-scaling activity - consider adjusting thresholds")
+        
+        return {
+            "current_metrics": metrics,
+            "recommendations": recommendations,
+            "optimization_score": min(1.0, 
+                (metrics["cache_hit_rate"] + metrics["parallel_efficiency"]) / 2)
+        }

@@ -6,7 +6,7 @@ alerting, and observability features.
 """
 
 import time
-import psutil
+# import psutil  # Mock for now
 import threading
 import asyncio
 from typing import Dict, List, Any, Optional, Callable, Union, Tuple

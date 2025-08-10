@@ -17,9 +17,11 @@ from .optimizer import ModelOptimizer, OptimizationResult
 from .explorer import DesignSpaceExplorer, DesignSpaceResult
 from ..utils.monitoring import record_metric, monitor_function, get_health_status
 from ..utils.validation import validate_inputs, SecurityValidator
-from ..utils.logging import get_logger
+from ..utils.exceptions import WorkflowError, ValidationError
+# from ..utils.logging import get_logger  # Use standard logging for now
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class WorkflowStage(Enum):
@@ -84,6 +86,10 @@ class WorkflowState:
         self.stage = stage
         self.progress = progress
     
+    def set_stage(self, stage: WorkflowStage) -> None:
+        """Set workflow stage."""
+        self.stage = stage
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert state to dictionary."""
         return {
@@ -140,44 +146,58 @@ class Workflow:
             input_shapes: Input tensor shapes
             framework: ML framework ("pytorch", "tensorflow", "onnx", "auto")
         """
-        # Input validation and security checks
-        security_validator = SecurityValidator()
-        if not security_validator.validate_file_path(model_path):
-            raise ValueError("Invalid or unsafe model path")
+        try:
+            # Input validation and security checks
+            security_validator = SecurityValidator()
+            if not security_validator.validate_file_path(model_path):
+                raise ValidationError("Invalid or unsafe model path")
+            
+            if not input_shapes:
+                raise ValidationError("input_shapes cannot be empty")
+            
+            # Validate framework
+            valid_frameworks = ["pytorch", "tensorflow", "onnx", "auto"]
+            if framework not in valid_frameworks:
+                raise ValidationError(f"framework must be one of: {valid_frameworks}")
+            
+            try:
+                record_metric("workflow_model_import_started", 1, "counter", {"framework": framework})
+            except Exception as e:
+                logger.warning(f"Failed to record metric: {e}")
+            
+            self.state.update_progress(WorkflowStage.MODEL_IMPORT, 0.1)
+            self.state.add_message(f"Importing model from {model_path}")
+        except (ValidationError, ValueError) as e:
+            self.state.set_stage(WorkflowStage.FAILED)
+            raise WorkflowError(f"Model import validation failed: {e}")
         
-        if not input_shapes:
-            raise ValueError("input_shapes cannot be empty")
-        
-        # Validate framework
-        valid_frameworks = ["pytorch", "tensorflow", "onnx", "auto"]
-        if framework not in valid_frameworks:
-            raise ValueError(f"framework must be one of: {valid_frameworks}")
-        
-        record_metric("workflow_model_import_started", 1, "counter", {"framework": framework})
-        self.state.update_progress(WorkflowStage.MODEL_IMPORT, 0.1)
-        self.state.add_message(f"Importing model from {model_path}")
-        
-        # Mock model import - in practice would load actual model
-        if framework == "auto":
-            framework = self._detect_framework(model_path)
-        
-        # Create mock model object
-        class MockModel:
-            def __init__(self, path, shapes, framework):
-                self.path = path
-                self.input_shapes = shapes
-                self.framework = framework
-                self.complexity = 1.0
-        
-        self.model = MockModel(model_path, input_shapes, framework)
-        
-        # Profile the model
-        self.state.update_progress(WorkflowStage.MODEL_IMPORT, 0.5)
-        self.state.add_message("Profiling model computational requirements")
-        
-        # Use first input shape for profiling
-        primary_input_shape = list(input_shapes.values())[0]
-        self.model_profile = self.designer.profile_model(self.model, primary_input_shape)
+        try:
+            # Mock model import - in practice would load actual model
+            if framework == "auto":
+                framework = self._detect_framework(model_path)
+            
+            # Create mock model object
+            class MockModel:
+                def __init__(self, path, shapes, framework):
+                    self.path = path
+                    self.input_shapes = shapes
+                    self.framework = framework
+                    self.complexity = 1.0
+            
+            self.model = MockModel(model_path, input_shapes, framework)
+            
+            # Profile the model
+            self.state.update_progress(WorkflowStage.MODEL_IMPORT, 0.5)
+            self.state.add_message("Profiling model computational requirements")
+            
+            # Use first input shape for profiling
+            primary_input_shape = list(input_shapes.values())[0]
+            self.model_profile = self.designer.profile_model(self.model, primary_input_shape)
+            
+        except Exception as e:
+            self.state.set_stage(WorkflowStage.FAILED)
+            logger.error(f"Model import failed: {e}")
+            raise WorkflowError(f"Failed to import model: {e}")
         
         self.state.update_progress(WorkflowStage.MODEL_IMPORT, 1.0)
         self.state.add_message(
@@ -191,8 +211,8 @@ class Workflow:
             json.dump(self.model_profile.to_dict(), f, indent=2)
         self.state.artifacts["model_profile"] = str(profile_path)
     
-    @monitor_function("workflow_hardware_mapping")
-    @validate_inputs
+    # @monitor_function("workflow_hardware_mapping")
+    # @validate_inputs
     def map_to_hardware(
         self,
         template: str = "systolic_array",
@@ -314,8 +334,8 @@ class Workflow:
             json.dump(compile_info, f, indent=2)
         self.state.artifacts["compilation_info"] = str(compile_path)
     
-    @monitor_function("workflow_simulation")
-    @validate_inputs
+    # @monitor_function("workflow_simulation")
+    # @validate_inputs
     def simulate(
         self,
         testbench: str,

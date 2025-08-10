@@ -241,3 +241,46 @@ class ExternalServiceError(CodesignError):
             "status_code": status_code,
             "response": response,
         })
+
+
+class MonitoringError(CodesignError):
+    """Raised when monitoring system fails."""
+    
+    def __init__(
+        self, 
+        message: str, 
+        metric_name: Optional[str] = None,
+        component: Optional[str] = None
+    ):
+        super().__init__(message, "MONITORING_ERROR")
+        self.metric_name = metric_name
+        self.component = component
+        
+        self.details.update({
+            "metric_name": metric_name,
+            "component": component,
+        })
+
+
+class SystemHealthError(CodesignError):
+    """Raised when system health checks fail."""
+    
+    def __init__(
+        self, 
+        message: str, 
+        subsystem: Optional[str] = None,
+        severity: str = "warning"
+    ):
+        super().__init__(message, "SYSTEM_HEALTH_ERROR")
+        self.subsystem = subsystem
+        self.severity = severity
+        
+        self.details.update({
+            "subsystem": subsystem,
+            "severity": severity,
+        })
+
+
+class HardwareModelingError(CodesignError):
+    """Raised when hardware modeling operations fail."""
+    pass

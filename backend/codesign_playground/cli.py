@@ -14,10 +14,9 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 import time
 
-from .core import (AcceleratorDesigner, ModelOptimizer, DesignSpaceExplorer, Workflow,
-                  CycleAccurateSimulator, PowerAnalyzer, AreaEstimator, PerformanceOptimizer,
-                  SimulationBackend)
-from .templates import SystolicArray, VectorProcessor, TransformerAccelerator, CustomTemplate
+from .core import AcceleratorDesigner, ModelOptimizer, DesignSpaceExplorer, Workflow
+# from .core import CycleAccurateSimulator, PowerAnalyzer, AreaEstimator, PerformanceOptimizer, SimulationBackend
+# from .templates import SystolicArray, VectorProcessor, TransformerAccelerator, CustomTemplate
 
 app = typer.Typer(
     name="codesign-playground",

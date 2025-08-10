@@ -7,10 +7,13 @@ and their corresponding hardware accelerators.
 
 from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass
-import numpy as np
+import random
+import math
 from .accelerator import Accelerator, ModelProfile
 from ..utils.monitoring import record_metric, monitor_function
 from ..utils.validation import validate_inputs, validate_model, SecurityValidator
+from ..utils.exceptions import OptimizationError, ValidationError
+import logging
 
 
 @dataclass
@@ -88,7 +91,11 @@ class ModelOptimizer:
         if not security_validator.validate_numeric_input(power_budget, "power_budget", min_value=0.1, max_value=100):
             raise ValueError("Invalid power_budget value")
         
-        record_metric("co_optimization_started", 1, "counter", {"strategy": optimization_strategy})
+        try:
+            record_metric("co_optimization_started", 1, "counter", {"strategy": optimization_strategy})
+        except Exception as e:
+            logging.warning(f"Failed to record metric: {e}")
+        
         import time
         start_time = time.time()
         
@@ -96,30 +103,44 @@ class ModelOptimizer:
         best_design = None
         best_score = float('-inf')
         
-        for iteration in range(iterations):
-            # Model optimization step
-            current_model = self._optimize_model_step(target_fps, power_budget)
-            
-            # Hardware optimization step  
-            current_accelerator = self._optimize_hardware_step(target_fps, power_budget)
-            
-            # Evaluate combined design
-            metrics = self._evaluate_design(current_model, current_accelerator)
-            score = self._compute_objective_score(metrics, optimization_strategy)
-            
-            convergence_history.append({
-                "iteration": iteration,
-                "score": score,
-                "fps": metrics["fps"],
-                "power": metrics["power"],
-                "accuracy": metrics["accuracy"],
-            })
-            
-            if score > best_score:
-                best_score = score
-                best_design = (current_model, current_accelerator, metrics)
+        try:
+            for iteration in range(iterations):
+                try:
+                    # Model optimization step
+                    current_model = self._optimize_model_step(target_fps, power_budget)
+                    
+                    # Hardware optimization step  
+                    current_accelerator = self._optimize_hardware_step(target_fps, power_budget)
+                    
+                    # Evaluate combined design
+                    metrics = self._evaluate_design(current_model, current_accelerator)
+                    score = self._compute_objective_score(metrics, optimization_strategy)
+                    
+                    convergence_history.append({
+                        "iteration": iteration,
+                        "score": score,
+                        "fps": metrics["fps"],
+                        "power": metrics["power"],
+                        "accuracy": metrics["accuracy"],
+                    })
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_design = (current_model, current_accelerator, metrics)
+                        
+                except Exception as e:
+                    logging.error(f"Optimization iteration {iteration} failed: {e}")
+                    # Continue with next iteration instead of failing completely
+                    continue
+        except Exception as e:
+            logging.error(f"Critical optimization failure: {e}")
+            raise OptimizationError(f"Co-optimization failed: {e}")
         
         optimization_time = time.time() - start_time
+        
+        if best_design is None:
+            raise OptimizationError("No valid design found during optimization")
+        
         best_model, best_accelerator, best_metrics = best_design
         
         result = OptimizationResult(
@@ -131,9 +152,12 @@ class ModelOptimizer:
             optimization_time=optimization_time,
         )
         
-        record_metric("co_optimization_completed", 1, "counter", {"strategy": optimization_strategy})
-        record_metric("co_optimization_time", optimization_time, "timer")
-        record_metric("co_optimization_best_score", best_score, "gauge")
+        try:
+            record_metric("co_optimization_completed", 1, "counter", {"strategy": optimization_strategy})
+            record_metric("co_optimization_time", optimization_time, "timer")
+            record_metric("co_optimization_best_score", best_score, "gauge")
+        except Exception as e:
+            logging.warning(f"Failed to record completion metrics: {e}")
         
         return result
     
@@ -356,7 +380,7 @@ class HardwareAwareTraining:
         
         for epoch in range(epochs):
             # Simulate training metrics
-            accuracy = 0.5 + (epoch / epochs) * 0.4 + np.random.normal(0, 0.02)
+            accuracy = 0.5 + (epoch / epochs) * 0.4 + random.gauss(0, 0.02)
             hardware_efficiency = self._compute_hardware_efficiency(trained_model)
             
             # Apply hardware-aware callbacks
@@ -382,7 +406,7 @@ class HardwareAwareTraining:
         
         # Simple efficiency model
         model_ops = getattr(model, 'operations', 50)  # GOPS
-        efficiency = min(1.0, compute_roof / model_ops) * 0.8 + np.random.normal(0, 0.05)
+        efficiency = min(1.0, compute_roof / model_ops) * 0.8 + random.gauss(0, 0.05)
         return max(0.0, min(1.0, efficiency))
     
     def _apply_structured_pruning(self, model: Any) -> Any:
