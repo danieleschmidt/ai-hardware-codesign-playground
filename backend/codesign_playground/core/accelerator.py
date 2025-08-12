@@ -11,8 +11,10 @@ from pathlib import Path
 import json
 import hashlib
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 # import numpy as np  # Mock for now
+from .cache import cached, get_thread_pool
+from ..utils.monitoring import record_metric
 
 
 @dataclass
@@ -180,10 +182,9 @@ class AcceleratorDesigner:
         self.dataflow_options = ["weight_stationary", "output_stationary", "row_stationary"]
         self.memory_options = ["sram_32kb", "sram_64kb", "sram_128kb", "dram"]
         
-        # Performance optimization
+        # Performance optimization using shared thread pool
         self._cache = {}
         self._cache_lock = threading.RLock()
-        self._thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="accelerator_design")
         
         # Design optimization statistics
         self.design_stats = {
@@ -193,6 +194,7 @@ class AcceleratorDesigner:
             "total_designs": 0
         }
     
+    @cached(cache_type="model", ttl=3600.0)
     def profile_model(self, model: Any, input_shape: Tuple[int, ...]) -> ModelProfile:
         """
         Profile a neural network model to extract computational requirements.
@@ -241,6 +243,7 @@ class AcceleratorDesigner:
         
         return profile
     
+    @cached(cache_type="accelerator", ttl=1800.0)
     def design(
         self,
         compute_units: int = 64,
@@ -369,22 +372,25 @@ class AcceleratorDesigner:
         if max_workers is None:
             max_workers = min(len(configurations), 4)
         
-        # Use thread pool for parallel design
+        # Use shared thread pool for parallel design
         results = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_config = {
-                executor.submit(self._design_single_config, config): config
-                for config in configurations
-            }
-            
-            for future in future_to_config:
-                try:
-                    accelerator = future.result()
-                    results.append(accelerator)
-                except Exception as e:
-                    print(f"Design failed for config {future_to_config[future]}: {e}")
-                    # Add a placeholder or skip
-                    results.append(None)
+        executor = get_thread_pool()
+        
+        future_to_config = {
+            executor.submit(self._design_single_config, config): config
+            for config in configurations
+        }
+        
+        for future in as_completed(future_to_config):
+            try:
+                accelerator = future.result()
+                results.append(accelerator)
+                record_metric("accelerator_design_success", 1, "counter")
+            except Exception as e:
+                print(f"Design failed for config {future_to_config[future]}: {e}")
+                record_metric("accelerator_design_failure", 1, "counter")
+                # Add a placeholder or skip
+                results.append(None)
         
         return [acc for acc in results if acc is not None]
     
