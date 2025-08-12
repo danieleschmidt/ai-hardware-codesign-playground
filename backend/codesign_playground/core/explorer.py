@@ -9,12 +9,17 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass
 # import numpy as np  # Mock for now
 import random
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
+import logging
 
 from .accelerator import AcceleratorDesigner, Accelerator, ModelProfile
 from .optimizer import ModelOptimizer
+from ..utils.monitoring import record_metric
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -264,7 +269,9 @@ class DesignSpaceExplorer:
         param_names = list(design_space.keys())
         param_values = list(design_space.values())
         
-        total_combinations = np.prod([len(values) for values in param_values])
+        total_combinations = 1
+        for values in param_values:
+            total_combinations *= len(values)
         
         if total_combinations <= max_samples:
             # Full grid
