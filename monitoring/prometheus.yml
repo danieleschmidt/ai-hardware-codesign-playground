@@ -1,9 +1,13 @@
+# Enhanced Prometheus configuration for AI Hardware Co-Design Playground
+# Production monitoring with comprehensive metrics collection
+
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: 'ai-hardware-codesign'
     environment: 'production'
+    project: 'ai-hardware-codesign-playground'
+    region: 'us-east-1'
 
 rule_files:
   - "alert_rules.yml"
@@ -16,52 +20,85 @@ alerting:
           - alertmanager:9093
 
 scrape_configs:
+  # Prometheus self-monitoring
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+    scrape_interval: 30s
 
-  - job_name: 'codesign-backend'
+  # Main API service with enhanced metrics
+  - job_name: 'codesign-api'
     static_configs:
-      - targets: ['backend:8000']
+      - targets: ['codesign-api:8000']
     metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    params:
+      format: ['prometheus']
+
+  # Health checks
+  - job_name: 'health-checks'
+    static_configs:
+      - targets: ['codesign-api:8000']
+    metrics_path: /health
+    scrape_interval: 30s
+    scrape_timeout: 5s
+
+  # Auto-scaling metrics
+  - job_name: 'auto-scaling'
+    static_configs:
+      - targets: ['codesign-api:8000']
+    metrics_path: /api/v1/scaling/metrics
+    scrape_interval: 5s
+    scrape_timeout: 3s
+
+  # Performance profiling metrics
+  - job_name: 'performance'
+    static_configs:
+      - targets: ['codesign-api:8000']
+    metrics_path: /api/v1/performance/metrics  
+    scrape_interval: 60s
+    scrape_timeout: 30s
+
+  # Security and validation metrics
+  - job_name: 'security'
+    static_configs:
+      - targets: ['codesign-api:8000']
+    metrics_path: /api/v1/security/metrics
     scrape_interval: 30s
     scrape_timeout: 10s
 
-  - job_name: 'codesign-frontend'
+  # Infrastructure monitoring
+  - job_name: 'postgres'
     static_configs:
-      - targets: ['frontend:3000']
+      - targets: ['postgres:5432']
     metrics_path: /metrics
     scrape_interval: 30s
 
-  - job_name: 'postgres-exporter'
+  - job_name: 'redis'
     static_configs:
-      - targets: ['postgres-exporter:9187']
-
-  - job_name: 'redis-exporter'
-    static_configs:
-      - targets: ['redis-exporter:9121']
-
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets: ['node-exporter:9100']
-
-  - job_name: 'cadvisor'
-    static_configs:
-      - targets: ['cadvisor:8080']
+      - targets: ['redis:6379']
     metrics_path: /metrics
-    scrape_interval: 10s
-
-  - job_name: 'nginx-exporter'
-    static_configs:
-      - targets: ['nginx-exporter:9113']
     scrape_interval: 30s
 
-remote_write:
-  - url: "https://prometheus-remote-write-endpoint/api/v1/write"
-    basic_auth:
-      username: ""
-      password: ""
-    write_relabel_configs:
-      - source_labels: [__name__]
-        regex: 'go_.*'
-        action: drop
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:80']
+    metrics_path: /nginx_status
+    scrape_interval: 30s
+
+# Storage configuration for production
+storage:
+  tsdb:
+    path: /prometheus
+    retention.time: 30d
+    retention.size: 10GB
+    wal-compression: true
+
+# Optional remote write for long-term storage
+# remote_write:
+#   - url: "https://your-remote-storage/api/v1/write"
+#     queue_config:
+#       max_samples_per_send: 1000
+#       batch_send_deadline: 5s
+#       max_shards: 10

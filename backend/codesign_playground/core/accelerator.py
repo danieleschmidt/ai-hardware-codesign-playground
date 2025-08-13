@@ -15,6 +15,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # import numpy as np  # Mock for now
 from .cache import cached, get_thread_pool
 from ..utils.monitoring import record_metric
+from ..utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -355,44 +358,88 @@ class AcceleratorDesigner:
     def design_parallel(
         self,
         configurations: List[Dict[str, Any]],
-        max_workers: Optional[int] = None
+        max_workers: Optional[int] = None,
+        batch_size: int = 10
     ) -> List[Accelerator]:
         """
-        Design multiple accelerators in parallel for performance.
+        Design multiple accelerators in parallel with enhanced performance.
         
         Args:
             configurations: List of design configurations
-            max_workers: Maximum parallel workers
+            max_workers: Maximum parallel workers (auto-scaled)
+            batch_size: Batch size for processing
             
         Returns:
             List of designed accelerators
         """
+        import time
+        
         self.design_stats["parallel_designs"] += 1
+        start_time = time.time()
         
+        # Auto-scale workers based on system resources and workload
         if max_workers is None:
-            max_workers = min(len(configurations), 4)
+            try:
+                import psutil
+                cpu_count = psutil.cpu_count(logical=False) or 2
+                system_load = psutil.cpu_percent(interval=0.1)
+                
+                # Adaptive worker scaling
+                if system_load < 50:
+                    max_workers = min(len(configurations), cpu_count * 2)
+                elif system_load < 80:
+                    max_workers = min(len(configurations), cpu_count)
+                else:
+                    max_workers = min(len(configurations), max(2, cpu_count // 2))
+            except ImportError:
+                # Fallback if psutil not available
+                max_workers = min(len(configurations), 4)
         
-        # Use shared thread pool for parallel design
+        logger.info(f"Parallel design with {max_workers} workers, {len(configurations)} configs")
+        
+        # Process in batches for memory efficiency
+        all_results = []
+        for i in range(0, len(configurations), batch_size):
+            batch = configurations[i:i + batch_size]
+            batch_results = self._process_design_batch(batch, max_workers)
+            all_results.extend(batch_results)
+            
+            # Brief pause between batches to prevent resource exhaustion
+            if i + batch_size < len(configurations):
+                time.sleep(0.1)
+        
+        successful_designs = [acc for acc in all_results if acc is not None]
+        duration = time.time() - start_time
+        
+        logger.info(f"Completed parallel design: {len(successful_designs)}/{len(configurations)} successful in {duration:.2f}s")
+        record_metric("parallel_design_duration", duration, "timer")
+        record_metric("parallel_design_success_rate", len(successful_designs) / len(configurations), "gauge")
+        
+        return successful_designs
+    
+    def _process_design_batch(self, batch: List[Dict[str, Any]], max_workers: int) -> List[Optional[Accelerator]]:
+        """Process a batch of design configurations."""
         results = []
-        executor = get_thread_pool()
+        executor = get_thread_pool(max_workers)
         
+        # Submit all tasks
         future_to_config = {
             executor.submit(self._design_single_config, config): config
-            for config in configurations
+            for config in batch
         }
         
-        for future in as_completed(future_to_config):
+        # Collect results with timeout handling
+        for future in as_completed(future_to_config, timeout=300):  # 5 minute timeout
             try:
-                accelerator = future.result()
+                accelerator = future.result(timeout=60)  # 1 minute per design
                 results.append(accelerator)
                 record_metric("accelerator_design_success", 1, "counter")
             except Exception as e:
-                print(f"Design failed for config {future_to_config[future]}: {e}")
+                logger.error(f"Design failed: {e}")
                 record_metric("accelerator_design_failure", 1, "counter")
-                # Add a placeholder or skip
                 results.append(None)
         
-        return [acc for acc in results if acc is not None]
+        return results
     
     def _design_single_config(self, config: Dict[str, Any]) -> Accelerator:
         """Design single accelerator from configuration."""
