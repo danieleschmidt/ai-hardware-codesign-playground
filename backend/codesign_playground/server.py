@@ -148,6 +148,134 @@ async def rate_limit_middleware(request: Request, call_next):
     return response
 
 # Global state management with size limits
+MAX_ACTIVE_SESSIONS = 100
+MAX_SESSION_DURATION = 3600  # 1 hour
+active_sessions: Dict[str, Dict[str, Any]] = {}
+session_cleanup_lock = asyncio.Lock()
+
+# Pydantic models for API
+class ModelProfileRequest(BaseModel):
+    """Request model for model profiling."""
+    model_path: str = Field(..., description="Path to model file")
+    input_shape: List[int] = Field(..., description="Input tensor shape")
+    framework: Optional[str] = Field("auto", description="ML framework")
+    
+    @validator('model_path')
+    def validate_model_path(cls, v):
+        if not security_validator.validate_file_path(v):
+            raise ValueError("Invalid model path")
+        return v
+
+class AcceleratorDesignRequest(BaseModel):
+    """Request model for accelerator design."""
+    compute_units: int = Field(64, ge=1, le=1024, description="Number of compute units")
+    memory_hierarchy: List[str] = Field(["sram_64kb", "dram"], description="Memory hierarchy")
+    dataflow: str = Field("weight_stationary", description="Dataflow pattern")
+    frequency_mhz: float = Field(200.0, ge=1.0, le=2000.0, description="Operating frequency")
+    data_width: int = Field(8, ge=1, le=64, description="Data width in bits")
+    precision: str = Field("int8", description="Numerical precision")
+    power_budget_w: float = Field(5.0, ge=0.1, le=100.0, description="Power budget")
+
+# Health check endpoint
+@app.get("/health")
+@monitor_function("health_check")
+async def health_check():
+    """Health check endpoint."""
+    health_status = get_health_status()
+    return {
+        "status": "healthy" if health_status["healthy"] else "unhealthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "0.1.0",
+        "system": health_status,
+        "active_sessions": len(active_sessions)
+    }
+
+# API endpoints
+@app.post("/api/v1/profile")
+@monitor_function("model_profiling")
+@validate_inputs
+async def profile_model(request: ModelProfileRequest) -> Dict[str, Any]:
+    """Profile a neural network model."""
+    try:
+        designer = AcceleratorDesigner()
+        
+        # Mock model object
+        model_obj = {
+            "path": request.model_path,
+            "framework": request.framework,
+            "type": "neural_network"
+        }
+        
+        # Profile the model
+        profile = designer.profile_model(model_obj, tuple(request.input_shape))
+        
+        record_metric("model_profiling_success", 1, "counter")
+        
+        return {
+            "success": True,
+            "profile": profile.to_dict(),
+            "metadata": {
+                "model_path": request.model_path,
+                "input_shape": request.input_shape,
+                "framework": request.framework,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Model profiling failed: {e}")
+        record_metric("model_profiling_error", 1, "counter")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Model profiling failed: {str(e)}"
+        )
+
+@app.post("/api/v1/design")
+@monitor_function("accelerator_design")
+@validate_inputs  
+async def design_accelerator(request: AcceleratorDesignRequest) -> Dict[str, Any]:
+    """Design a hardware accelerator."""
+    try:
+        designer = AcceleratorDesigner()
+        
+        # Design accelerator
+        accelerator = designer.design(
+            compute_units=request.compute_units,
+            memory_hierarchy=request.memory_hierarchy,
+            dataflow=request.dataflow,
+            frequency_mhz=request.frequency_mhz,
+            data_width=request.data_width,
+            precision=request.precision,
+            power_budget_w=request.power_budget_w
+        )
+        
+        # Estimate performance
+        performance = accelerator.estimate_performance()
+        
+        record_metric("accelerator_design_success", 1, "counter")
+        
+        return {
+            "success": True,
+            "accelerator": accelerator.to_dict(),
+            "performance": performance,
+            "metadata": {
+                "design_time": time.time(),
+                "request_params": request.dict()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Accelerator design failed: {e}")
+        record_metric("accelerator_design_error", 1, "counter")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Accelerator design failed: {str(e)}"
+        )
+
+def main():
+    """Main entry point for running the server."""
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 MAX_ACTIVE_WORKFLOWS = 100
 MAX_JOB_RESULTS = 1000
 
