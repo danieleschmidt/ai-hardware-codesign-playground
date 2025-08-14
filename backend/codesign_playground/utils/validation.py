@@ -12,9 +12,9 @@ import json
 from dataclasses import dataclass
 
 from .exceptions import ValidationError
-from .logging import get_logger
+import logging
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @dataclass

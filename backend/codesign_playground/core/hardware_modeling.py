@@ -224,8 +224,9 @@ class CycleAccurateSimulator:
         latency_ms = cycles / (frequency_mhz * 1000)
         
         # Simulate utilization with some randomness
-        compute_util = min(0.95, 0.7 + np.random.normal(0, 0.1))
-        memory_util = min(0.90, 0.6 + np.random.normal(0, 0.1))
+        import random
+        compute_util = min(0.95, 0.7 + random.gauss(0, 0.1))
+        memory_util = min(0.90, 0.6 + random.gauss(0, 0.1))
         
         ops_per_cycle = 4  # Assume 4 operations per cycle
         ops_per_second = ops_per_cycle * frequency_mhz * 1e6 * compute_util
@@ -243,10 +244,10 @@ class CycleAccurateSimulator:
             pipeline_efficiency=compute_util * 0.9,
             memory_bandwidth_used=memory_util * 25.6,  # GB/s
             memory_stall_cycles=int(cycles * (1 - memory_util) * 0.5),
-            cache_hit_rate=0.85 + np.random.normal(0, 0.05),
-            accuracy=0.95 + np.random.normal(0, 0.02),
-            precision=0.94 + np.random.normal(0, 0.02),
-            recall=0.93 + np.random.normal(0, 0.02),
+            cache_hit_rate=max(0.8, min(0.99, 0.85 + random.gauss(0, 0.05))),
+            accuracy=max(0.9, min(0.99, 0.95 + random.gauss(0, 0.02))),
+            precision=max(0.9, min(0.99, 0.94 + random.gauss(0, 0.02))),
+            recall=max(0.9, min(0.99, 0.93 + random.gauss(0, 0.02))),
         )
     
     def _run_rtl_simulation(
