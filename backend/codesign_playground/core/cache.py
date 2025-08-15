@@ -19,10 +19,10 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 
-from ..utils.logging import get_logger, get_performance_logger
+import logging
 
-logger = get_logger(__name__)
-perf_logger = get_performance_logger(__name__)
+logger = logging.getLogger(__name__)
+perf_logger = logging.getLogger(f"{__name__}.performance")
 
 
 @dataclass
@@ -457,8 +457,11 @@ def cached(
                 cache_key = hashlib.md5(key_str.encode()).hexdigest()
             
             # Try to get from cache
-            with perf_logger.timer(f"cache_lookup_{func.__name__}", cache_key=cache_key):
-                result = cache.get(cache_key)
+            start_time = time.time()
+            result = cache.get(cache_key)
+            cache_lookup_time = time.time() - start_time
+            perf_logger.debug(f"Cache lookup for {func.__name__} took {cache_lookup_time:.4f}s", 
+                           extra={"cache_key": cache_key})
             
             if result is not None:
                 logger.debug(
@@ -470,8 +473,11 @@ def cached(
                 return result
             
             # Execute function
-            with perf_logger.timer(f"function_execution_{func.__name__}", cache_key=cache_key):
-                result = func(*args, **kwargs)
+            exec_start_time = time.time()
+            result = func(*args, **kwargs)
+            exec_time = time.time() - exec_start_time
+            perf_logger.debug(f"Function {func.__name__} execution took {exec_time:.4f}s",
+                           extra={"cache_key": cache_key})
             
             # Check if result should be cached
             should_cache = True

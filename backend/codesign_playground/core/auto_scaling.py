@@ -17,10 +17,10 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import queue
 
-from ..utils.logging import get_logger
+import logging
 from ..utils.monitoring import record_metric
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ScalingMode(Enum):
