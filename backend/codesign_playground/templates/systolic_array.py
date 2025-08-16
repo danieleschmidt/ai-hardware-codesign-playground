@@ -9,8 +9,10 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
+import math
 
 from ..utils.logging import get_logger
+from ..utils.monitoring import record_metric
 
 logger = get_logger(__name__)
 
@@ -109,31 +111,67 @@ class SystolicArray:
         output_width = input_width - kernel_size + 1
         total_outputs = output_channels * output_height * output_width
         
-        # Estimate cycles based on dataflow
+        # Enhanced cycle estimation based on dataflow and memory constraints
         if self.dataflow == "weight_stationary":
+            # Weights are pre-loaded, stream activations
             cycles_per_output = input_channels * kernel_size * kernel_size
-            total_cycles = total_outputs * cycles_per_output // pe_count
+            pipeline_stages = 3  # Fetch, compute, writeback
+            memory_stall_factor = 1.2  # Account for memory access patterns
+            total_cycles = int((total_outputs * cycles_per_output // pe_count) * memory_stall_factor + pipeline_stages)
         elif self.dataflow == "output_stationary":
-            cycles_per_weight_load = total_outputs // pe_count
-            total_cycles = total_weights * cycles_per_weight_load
+            # Partial sums accumulate in place
+            weight_fetch_cycles = total_weights // (pe_count * 4)  # Assume 4 weights per cycle fetch
+            compute_cycles = total_outputs * input_channels * kernel_size * kernel_size // pe_count
+            total_cycles = max(weight_fetch_cycles, compute_cycles) + 10  # Startup overhead
         else:  # row_stationary
-            total_cycles = total_outputs * input_channels * kernel_size * kernel_size // pe_count
+            # Hybrid approach with row-wise weight reuse
+            row_reuse_factor = min(self.rows, output_channels)
+            effective_weight_loads = total_weights // row_reuse_factor
+            total_cycles = effective_weight_loads + (total_outputs * input_channels * kernel_size * kernel_size // pe_count)
+        
+        # Enhanced utilization calculation considering dataflow efficiency
+        theoretical_utilization = min(1.0, (total_outputs * input_channels * kernel_size * kernel_size) / (pe_count * total_cycles))
+        
+        # Apply dataflow-specific efficiency factors
+        if self.dataflow == "weight_stationary":
+            dataflow_efficiency = 0.95  # High efficiency due to weight reuse
+        elif self.dataflow == "output_stationary":
+            dataflow_efficiency = 0.85  # Medium efficiency due to partial sum handling
+        else:  # row_stationary
+            dataflow_efficiency = 0.90  # Good balance
+        
+        # Consider memory bandwidth limitations
+        memory_intensity = (total_weights + total_outputs) / total_cycles
+        memory_efficiency = min(1.0, 32 / memory_intensity)  # Assume 32 GB/s bandwidth
+        
+        actual_utilization = theoretical_utilization * dataflow_efficiency * memory_efficiency
         
         self.performance_model = {
             "total_cycles": total_cycles,
-            "utilization": min(1.0, total_weights / pe_count),
-            "throughput_ops_per_cycle": pe_count * self.performance_model.get("utilization", 0.8),
+            "utilization": actual_utilization,
+            "theoretical_utilization": theoretical_utilization,
+            "dataflow_efficiency": dataflow_efficiency,
+            "memory_efficiency": memory_efficiency,
+            "throughput_ops_per_cycle": pe_count * actual_utilization,
             "memory_accesses": total_weights + total_outputs,
+            "memory_intensity": memory_intensity,
         }
         
         self.configured_for = config
+        
+        # Record performance metrics
+        record_metric("systolic_conv2d_config", 1, "counter")
+        record_metric("systolic_conv2d_utilization", actual_utilization, "gauge")
+        record_metric("systolic_conv2d_cycles", total_cycles, "gauge")
         
         logger.info(
             "Configured systolic array for Conv2D",
             input_channels=input_channels,
             output_channels=output_channels,
             estimated_cycles=total_cycles,
-            utilization=self.performance_model["utilization"]
+            utilization=actual_utilization,
+            dataflow_efficiency=dataflow_efficiency,
+            memory_efficiency=memory_efficiency
         )
     
     def configure_for_matmul(
@@ -161,32 +199,72 @@ class SystolicArray:
         pe_count = self.rows * self.cols
         total_operations = m * n * k
         
-        # Estimate cycles for different dataflows
+        # Enhanced cycle estimation for matrix multiplication
         if self.dataflow == "weight_stationary":
-            # Weights stay in PEs, stream activations and collect outputs
-            cycles = (m * n * k) // pe_count
+            # Weights pre-loaded, stream A and B matrices
+            weight_load_cycles = (k * n) // pe_count  # Load B matrix into PEs
+            compute_cycles = (m * n * k) // pe_count
+            pipeline_overhead = max(self.rows, self.cols)
+            cycles = weight_load_cycles + compute_cycles + pipeline_overhead
         elif self.dataflow == "output_stationary":
-            # Outputs stay in PEs, stream weights and activations
-            cycles = (m * n * k) // pe_count
+            # C matrix accumulated in place
+            matrix_setup_cycles = (m * n) // pe_count  # Setup output locations
+            compute_cycles = (m * n * k) // pe_count
+            cycles = matrix_setup_cycles + compute_cycles
         else:  # row_stationary
-            cycles = (m * n * k) // pe_count
+            # Row-wise processing with partial weight reuse
+            row_blocks = math.ceil(m / self.rows)
+            col_blocks = math.ceil(n / self.cols)
+            cycles_per_block = k + max(self.rows, self.cols)  # Computation + data movement
+            cycles = row_blocks * col_blocks * cycles_per_block
         
-        utilization = min(1.0, total_operations / (pe_count * cycles))
+        # Enhanced utilization calculation
+        theoretical_utilization = min(1.0, total_operations / (pe_count * cycles))
+        
+        # Dataflow efficiency factors for GEMM
+        if self.dataflow == "weight_stationary":
+            dataflow_efficiency = 0.92
+        elif self.dataflow == "output_stationary": 
+            dataflow_efficiency = 0.88
+        else:  # row_stationary
+            dataflow_efficiency = 0.85
+        
+        # Memory efficiency based on matrix dimensions
+        total_data = m * k + k * n + m * n  # A + B + C matrices
+        memory_cycles = total_data // 8  # Assume 8 elements per cycle bandwidth
+        memory_bound = cycles < memory_cycles
+        memory_efficiency = 0.7 if memory_bound else 0.95
+        
+        utilization = theoretical_utilization * dataflow_efficiency * memory_efficiency
         
         self.performance_model = {
             "total_cycles": cycles,
             "utilization": utilization,
+            "theoretical_utilization": theoretical_utilization,
+            "dataflow_efficiency": dataflow_efficiency,
+            "memory_efficiency": memory_efficiency,
             "throughput_ops_per_cycle": pe_count * utilization,
-            "memory_accesses": m * k + k * n + m * n,  # A + B + C
+            "memory_accesses": total_data,
+            "memory_bound": memory_bound,
+            "arithmetic_intensity": total_operations / total_data,
         }
         
         self.configured_for = config
+        
+        # Record performance metrics
+        record_metric("systolic_gemm_config", 1, "counter")
+        record_metric("systolic_gemm_utilization", utilization, "gauge")
+        record_metric("systolic_gemm_cycles", cycles, "gauge")
+        record_metric("systolic_gemm_arithmetic_intensity", total_operations / total_data, "gauge")
         
         logger.info(
             "Configured systolic array for GEMM",
             m=m, n=n, k=k,
             estimated_cycles=cycles,
-            utilization=utilization
+            utilization=utilization,
+            dataflow_efficiency=dataflow_efficiency,
+            memory_efficiency=memory_efficiency,
+            arithmetic_intensity=total_operations / total_data
         )
     
     def generate_rtl(self, output_dir: str = "./rtl") -> str:
@@ -222,27 +300,62 @@ class SystolicArray:
         """
         pe_count = self.rows * self.cols
         
-        # Rough estimates based on PE complexity
-        luts_per_pe = 100 + (self.data_width * 2)  # MAC + control
-        ffs_per_pe = 50 + self.accumulator_width    # Registers
-        dsps_per_pe = 1 if self.data_width <= 18 else 2  # DSP48E2 in Xilinx
+        # Enhanced resource estimation based on modern FPGA characteristics
         
-        # Memory requirements (rough estimate)
+        # LUT estimation: MAC unit + control logic + interconnect
+        mac_luts = self.data_width * 6  # Multiplier LUTs
+        acc_luts = self.accumulator_width * 2  # Accumulator logic
+        control_luts = 25  # Control FSM and datapath control
+        interconnect_luts = 15  # Local interconnect logic
+        luts_per_pe = mac_luts + acc_luts + control_luts + interconnect_luts
+        
+        # Flip-flop estimation: Pipeline registers + accumulator + control
+        pipeline_ffs = self.data_width * 4  # Input/output pipeline stages
+        acc_ffs = self.accumulator_width  # Accumulator register
+        control_ffs = 20  # Control state and valid signals
+        ffs_per_pe = pipeline_ffs + acc_ffs + control_ffs
+        
+        # DSP estimation based on precision and multiply requirements
+        if self.data_width <= 9:
+            dsps_per_pe = 0.25  # Can pack 4 small multipliers per DSP
+        elif self.data_width <= 18:
+            dsps_per_pe = 1  # One DSP48E2 per PE
+        else:
+            dsps_per_pe = 2  # Need multiple DSPs for larger precision
+        
+        # Memory requirements based on dataflow and buffering needs
         if self.dataflow == "weight_stationary":
-            bram_kb = (pe_count * self.data_width * 256) // (8 * 1024)  # Weight storage
-        else:
-            bram_kb = (pe_count * self.accumulator_width * 64) // (8 * 1024)  # Buffer storage
+            # Need to store weights for each PE
+            weight_storage_bits = pe_count * self.data_width * 512  # Assume 512 weights per PE
+            activation_buffer_bits = self.rows * self.data_width * 128  # Input buffers
+            total_memory_bits = weight_storage_bits + activation_buffer_bits
+        elif self.dataflow == "output_stationary":
+            # Need larger accumulator buffers
+            output_buffer_bits = pe_count * self.accumulator_width * 64
+            input_buffer_bits = (self.rows + self.cols) * self.data_width * 128
+            total_memory_bits = output_buffer_bits + input_buffer_bits
+        else:  # row_stationary
+            # Balanced memory requirements
+            total_memory_bits = pe_count * (self.data_width * 256 + self.accumulator_width * 32)
         
-        # Power estimation (very rough)
-        power_per_pe = 5.0  # mW per PE
-        total_power = pe_count * power_per_pe
+        bram_kb = total_memory_bits // (8 * 1024)
         
-        # Frequency estimate based on critical path
-        base_freq = 300.0  # MHz
-        if self.data_width > 16:
-            frequency = base_freq * 0.8  # Higher precision reduces frequency
-        else:
-            frequency = base_freq
+        # Enhanced power estimation
+        # Static power: 0.5mW per PE, Dynamic power: based on utilization and frequency
+        static_power_pe = 0.5  # mW
+        dynamic_power_pe = 4.0 * (self.data_width / 8) ** 1.5  # Scale with precision
+        total_power = pe_count * (static_power_pe + dynamic_power_pe)
+        
+        # Frequency estimation based on critical path analysis
+        base_freq = 350.0  # MHz for modern FPGAs
+        
+        # Critical path factors
+        multiplier_delay = 1.0 + (self.data_width - 8) * 0.05  # Scale with width
+        accumulator_delay = 1.0 + (self.accumulator_width - 32) * 0.02
+        interconnect_delay = 1.0 + math.log2(max(self.rows, self.cols)) * 0.1
+        
+        total_delay_factor = multiplier_delay * accumulator_delay * interconnect_delay
+        frequency = base_freq / total_delay_factor
         
         return ResourceEstimate(
             luts=pe_count * luts_per_pe,

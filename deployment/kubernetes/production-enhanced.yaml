@@ -1,0 +1,947 @@
+---
+# Namespace for the application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codesign-production
+  labels:
+    name: codesign-production
+    environment: production
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/version: "2.0"
+
+---
+# NetworkPolicy for enhanced security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codesign-network-policy
+  namespace: codesign-production
+spec:
+  podSelector:
+    matchLabels:
+      app: codesign-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: nginx-ingress
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+# Secret for sensitive configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: codesign-secrets
+  namespace: codesign-production
+type: Opaque
+data:
+  postgres-password: Y29kZXNpZ25fcHJvZF9wYXNzd29yZA==  # base64 encoded
+  redis-password: cmVkaXNfcHJvZF9wYXNzd29yZA==
+  secret-key: c3VwZXJfc2VjcmV0X2tleV9mb3JfcHJvZHVjdGlvbg==
+  jwt-secret: and0X3NlY3JldF9rZXlfZm9yX3Byb2R1Y3Rpb24=
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codesign-config
+  namespace: codesign-production
+data:
+  environment: "production"
+  log-level: "INFO"
+  max-workers: "8"
+  scaling-mode: "balanced"
+  cache-size-mb: "256"
+  compliance-region: "global"
+  circuit-breaker-enabled: "true"
+  health-check-enabled: "true"
+  distributed-tracing-enabled: "true"
+  rate-limiting-enabled: "true"
+  max-request-size: "100MB"
+  session-timeout: "3600"
+  backup-enabled: "true"
+  backup-interval: "3600"
+  metrics-collection-enabled: "true"
+  performance-monitoring-enabled: "true"
+
+---
+# PersistentVolumeClaim for PostgreSQL
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: codesign-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# PersistentVolumeClaim for Redis
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: codesign-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# PersistentVolumeClaim for compliance data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: compliance-pvc
+  namespace: codesign-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: encrypted-ssd
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+# PersistentVolumeClaim for backups
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: codesign-production
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: backup-storage
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# PostgreSQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: codesign-production
+  labels:
+    app: postgres
+    component: database
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        component: database
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          value: "codesign_db"
+        - name: POSTGRES_USER
+          value: "codesign"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        - name: POSTGRES_SHARED_PRELOAD_LIBRARIES
+          value: "pg_stat_statements"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        - name: postgres-init
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1.5Gi"
+            cpu: "1"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - codesign
+            - -d
+            - codesign_db
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - codesign
+            - -d
+            - codesign_db
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: postgres-config
+        configMap:
+          name: postgres-config
+      - name: postgres-init
+        configMap:
+          name: postgres-init-scripts
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: codesign-production
+  labels:
+    app: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: codesign-production
+  labels:
+    app: redis
+    component: cache
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        component: cache
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        - --requirepass
+        - $(REDIS_PASSWORD)
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        - name: redis-config
+          mountPath: /etc/redis
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "768Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - --no-auth-warning
+            - -a
+            - $(REDIS_PASSWORD)
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - --no-auth-warning
+            - -a
+            - $(REDIS_PASSWORD)
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: redis-storage
+        persistentVolumeClaim:
+          claimName: redis-pvc
+      - name: redis-config
+        configMap:
+          name: redis-config
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: codesign-production
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+  type: ClusterIP
+
+---
+# Main API Deployment with enhanced robustness
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codesign-api
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+    component: backend
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: codesign-api
+  template:
+    metadata:
+      labels:
+        app: codesign-api
+        component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - until pg_isready -h postgres -p 5432 -U codesign; do echo waiting for postgres; sleep 2; done;
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+      - name: wait-for-redis
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - until redis-cli -h redis -p 6379 -a $REDIS_PASSWORD ping; do echo waiting for redis; sleep 2; done;
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+      containers:
+      - name: codesign-api
+        image: codesign-playground:production
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: environment
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: log-level
+        - name: PYTHONPATH
+          value: "/app/backend"
+        - name: MAX_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: max-workers
+        - name: SCALING_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: scaling-mode
+        - name: CACHE_SIZE_MB
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: cache-size-mb
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        - name: POSTGRES_URL
+          value: "postgresql://codesign:$(POSTGRES_PASSWORD)@postgres:5432/codesign_db"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: secret-key
+        - name: COMPLIANCE_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: compliance-region
+        - name: CIRCUIT_BREAKER_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: circuit-breaker-enabled
+        - name: HEALTH_CHECK_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: health-check-enabled
+        - name: DISTRIBUTED_TRACING_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: distributed-tracing-enabled
+        - name: RATE_LIMITING_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: rate-limiting-enabled
+        - name: METRICS_COLLECTION_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: metrics-collection-enabled
+        volumeMounts:
+        - name: compliance-storage
+          mountPath: /app/compliance
+        - name: backup-storage
+          mountPath: /app/backups
+        - name: logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1"
+          limits:
+            memory: "2Gi"
+            cpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+      volumes:
+      - name: compliance-storage
+        persistentVolumeClaim:
+          claimName: compliance-pvc
+      - name: backup-storage
+        persistentVolumeClaim:
+          claimName: backup-pvc
+      - name: logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 500Mi
+
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: codesign-api
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+spec:
+  selector:
+    app: codesign-api
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: ClusterIP
+
+---
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: codesign-api-hpa
+  namespace: codesign-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: codesign-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: codesign-api-pdb
+  namespace: codesign-production
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: codesign-api
+
+---
+# Celery Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  namespace: codesign-production
+  labels:
+    app: celery-worker
+    component: worker
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+        component: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: celery-worker
+        image: codesign-playground:production
+        command:
+        - celery
+        - -A
+        - codesign_playground.worker
+        - worker
+        - --loglevel=info
+        - --concurrency=4
+        - --max-tasks-per-child=1000
+        - --max-memory-per-child=1048576
+        env:
+        - name: ENV
+          value: "production"
+        - name: PYTHONPATH
+          value: "/app/backend"
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        - name: POSTGRES_URL
+          value: "postgresql://codesign:$(POSTGRES_PASSWORD)@postgres:5432/codesign_db"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        - name: CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP
+          value: "true"
+        - name: CELERY_BROKER_CONNECTION_MAX_RETRIES
+          value: "10"
+        - name: CIRCUIT_BREAKER_ENABLED
+          value: "true"
+        - name: HEALTH_CHECK_ENABLED
+          value: "true"
+        volumeMounts:
+        - name: compliance-storage
+          mountPath: /app/compliance
+        - name: logs
+          mountPath: /app/logs
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1.5Gi"
+            cpu: "1.5"
+        livenessProbe:
+          exec:
+            command:
+            - celery
+            - -A
+            - codesign_playground.worker
+            - inspect
+            - ping
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: compliance-storage
+        persistentVolumeClaim:
+          claimName: compliance-pvc
+      - name: logs
+        emptyDir:
+          sizeLimit: 1Gi
+
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codesign-ingress
+  namespace: codesign-production
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://codesign.example.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';";
+spec:
+  tls:
+  - hosts:
+    - codesign.example.com
+    secretName: codesign-tls
+  rules:
+  - host: codesign.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: codesign-api
+            port:
+              number: 8000
+
+---
+# ServiceMonitor for Prometheus monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: codesign-api-monitor
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+spec:
+  selector:
+    matchLabels:
+      app: codesign-api
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+
+---
+# PrometheusRule for alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: codesign-alerts
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+spec:
+  groups:
+  - name: codesign.rules
+    rules:
+    - alert: CodesignAPIDown
+      expr: up{job="codesign-api"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Codesign API is down"
+        description: "Codesign API has been down for more than 5 minutes."
+    
+    - alert: CodesignHighErrorRate
+      expr: rate(http_requests_total{job="codesign-api",status=~"5.."}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate on Codesign API"
+        description: "Error rate is {{ $value }} errors per second."
+    
+    - alert: CodesignHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="codesign-api"}[5m])) > 2
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High latency on Codesign API"
+        description: "95th percentile latency is {{ $value }} seconds."
+    
+    - alert: CodesignHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"codesign-api-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory usage on Codesign API"
+        description: "Memory usage is {{ $value | humanizePercentage }} of limit."
+    
+    - alert: PostgresDown
+      expr: up{job="postgres"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "PostgreSQL is down"
+        description: "PostgreSQL has been down for more than 5 minutes."
+    
+    - alert: RedisDown
+      expr: up{job="redis"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Redis is down"
+        description: "Redis has been down for more than 5 minutes."
+
+---
+# CronJob for automated backups
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-job
+  namespace: codesign-production
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              pg_dump -h postgres -U codesign -d codesign_db > /backups/postgres_backup_$timestamp.sql
+              redis-cli -h redis -a $REDIS_PASSWORD --rdb /backups/redis_backup_$timestamp.rdb
+              find /backups -name "*.sql" -mtime +30 -delete
+              find /backups -name "*.rdb" -mtime +30 -delete
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: codesign-secrets
+                  key: postgres-password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: codesign-secrets
+                  key: redis-password
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backups
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-pvc
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1

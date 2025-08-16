@@ -1,0 +1,350 @@
+# AI Hardware Co-Design Playground - Production Inventory
+# Ansible inventory for production environment
+
+all:
+  vars:
+    # Global Configuration
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    
+    # Project Configuration
+    project_name: ai-hardware-codesign-playground
+    environment: production
+    version: "2.0"
+    
+    # Kubernetes Configuration
+    kubernetes_context: production-cluster
+    kubeconfig_path: ~/.kube/config
+    kubectl_binary: kubectl
+    helm_binary: helm
+    
+    # Container Registry
+    docker_registry: your-registry.com
+    registry_namespace: codesign-playground
+    image_pull_policy: Always
+    
+    # Application Configuration
+    app_name: codesign-playground
+    app_version: "{{ version }}"
+    app_replicas: 3
+    worker_replicas: 2
+    
+    # Domain Configuration
+    base_domain: codesign.yourdomain.com
+    api_domain: api.codesign.yourdomain.com
+    admin_domain: admin.codesign.yourdomain.com
+    monitoring_domain: monitoring.codesign.yourdomain.com
+    
+    # SSL Configuration
+    ssl_enabled: true
+    cert_manager_issuer: letsencrypt-prod
+    acme_email: admin@yourdomain.com
+    
+    # Database Configuration
+    postgres_enabled: true
+    postgres_version: "15"
+    postgres_database: codesign_db
+    postgres_username: codesign
+    postgres_password: "{{ vault_postgres_password }}"
+    postgres_host: postgres-primary
+    postgres_port: 5432
+    postgres_replica_enabled: true
+    postgres_backup_enabled: true
+    postgres_performance_insights: true
+    
+    # Redis Configuration
+    redis_enabled: true
+    redis_version: "7"
+    redis_password: "{{ vault_redis_password }}"
+    redis_host: redis-sentinel
+    redis_port: 26379
+    redis_sentinel_enabled: true
+    redis_cluster_enabled: false
+    
+    # Security Configuration
+    secret_key: "{{ vault_secret_key }}"
+    jwt_secret: "{{ vault_jwt_secret }}"
+    encryption_key: "{{ vault_encryption_key }}"
+    security_hardened: true
+    enable_rbac: true
+    enable_network_policies: true
+    enable_pod_security_policies: true
+    
+    # Monitoring Configuration
+    monitoring_enabled: true
+    prometheus_enabled: true
+    grafana_enabled: true
+    alertmanager_enabled: true
+    jaeger_enabled: true
+    elasticsearch_enabled: true
+    fluentbit_enabled: true
+    
+    # Monitoring Credentials
+    grafana_admin_password: "{{ vault_grafana_admin_password }}"
+    prometheus_retention: 90d
+    
+    # Alerting Configuration
+    alerting_enabled: true
+    slack_webhook_url: "{{ vault_slack_webhook_url }}"
+    pagerduty_integration_key: "{{ vault_pagerduty_integration_key }}"
+    email_alerts:
+      - alerts@yourdomain.com
+      - oncall@yourdomain.com
+    
+    # Backup Configuration
+    backup_enabled: true
+    backup_schedule: "0 2 * * *"  # Daily at 2 AM
+    backup_retention_days: 90
+    cross_region_backup: true
+    s3_backup_bucket: codesign-backups-production
+    backup_encryption_enabled: true
+    
+    # Scaling Configuration
+    autoscaling_enabled: true
+    hpa_enabled: true
+    vpa_enabled: true
+    cluster_autoscaler_enabled: true
+    
+    # API Scaling
+    api_min_replicas: 3
+    api_max_replicas: 20
+    api_target_cpu: 70
+    api_target_memory: 80
+    
+    # Worker Scaling
+    worker_min_replicas: 2
+    worker_max_replicas: 10
+    worker_target_cpu: 80
+    worker_target_memory: 85
+    
+    # Resource Limits
+    api_cpu_request: 1000m
+    api_cpu_limit: 2000m
+    api_memory_request: 2Gi
+    api_memory_limit: 4Gi
+    
+    worker_cpu_request: 500m
+    worker_cpu_limit: 2000m
+    worker_memory_request: 1Gi
+    worker_memory_limit: 3Gi
+    
+    # Storage Configuration
+    storage_class: fast-ssd
+    encrypted_storage_class: encrypted-ssd
+    postgres_storage_size: 100Gi
+    redis_storage_size: 20Gi
+    compliance_storage_size: 50Gi
+    backup_storage_size: 200Gi
+    
+    # Compliance Configuration
+    compliance_enabled: true
+    gdpr_enabled: true
+    ccpa_enabled: true
+    pdpa_enabled: true
+    audit_logging_enabled: true
+    data_retention_days: 2555  # 7 years
+    encryption_at_rest: true
+    encryption_in_transit: true
+    
+    # Performance Configuration
+    performance_monitoring_enabled: true
+    distributed_tracing_enabled: true
+    apm_enabled: true
+    profiling_enabled: false  # Enable in staging/dev only
+    
+    # Cache Configuration
+    cache_enabled: true
+    cache_size_mb: 512
+    redis_max_memory: 1gb
+    redis_max_memory_policy: allkeys-lru
+    
+    # Rate Limiting
+    rate_limiting_enabled: true
+    rate_limit_per_minute: 100
+    rate_limit_burst: 200
+    
+    # Load Balancer Configuration
+    load_balancer_type: nlb  # Application Load Balancer
+    enable_sticky_sessions: false
+    health_check_path: /health
+    health_check_interval: 30
+    health_check_timeout: 5
+    
+    # CDN Configuration
+    cdn_enabled: false
+    cloudfront_enabled: false
+    cloudflare_enabled: false
+    
+    # Multi-Region Configuration
+    multi_region_enabled: false
+    primary_region: us-east-1
+    replica_regions:
+      - us-west-2
+      - eu-west-1
+    
+    # Disaster Recovery
+    dr_enabled: true
+    rto_minutes: 60  # Recovery Time Objective
+    rpo_minutes: 15  # Recovery Point Objective
+    automated_failover: true
+    
+    # Cost Optimization
+    spot_instances_enabled: true
+    scheduled_scaling_enabled: false
+    resource_optimization_enabled: true
+    
+    # Development and Testing
+    load_testing_enabled: false
+    chaos_engineering_enabled: false
+    synthetic_monitoring_enabled: true
+    
+    # External Integrations
+    sentry_enabled: true
+    sentry_dsn: "{{ vault_sentry_dsn }}"
+    datadog_enabled: false
+    newrelic_enabled: false
+    
+    # Feature Flags
+    feature_flags:
+      enable_new_ui: true
+      enable_advanced_analytics: true
+      enable_ml_acceleration: true
+      enable_edge_computing: false
+      enable_gpu_support: true
+      enable_distributed_training: true
+    
+    # Maintenance Configuration
+    maintenance_window: "sun:04:00-sun:06:00"
+    auto_updates_enabled: false
+    security_updates_enabled: true
+    
+    # Logging Configuration
+    log_level: INFO
+    log_retention_days: 30
+    structured_logging: true
+    log_aggregation_enabled: true
+    
+    # Network Configuration
+    network_policies_enabled: true
+    ingress_class: nginx
+    ingress_annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+      nginx.ingress.kubernetes.io/rate-limit: "100"
+      nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+  children:
+    production:
+      hosts:
+        production-control:
+          ansible_host: localhost
+          ansible_connection: local
+          
+          # Environment-specific overrides
+          environment: production
+          deploy_env: prod
+          
+          # Kubernetes cluster details
+          cluster_name: codesign-production-cluster
+          cluster_region: us-east-1
+          cluster_zones:
+            - us-east-1a
+            - us-east-1b
+            - us-east-1c
+          
+          # Node groups configuration
+          node_groups:
+            general:
+              instance_types:
+                - t3.large
+                - t3a.large
+              min_size: 3
+              max_size: 10
+              desired_size: 3
+              disk_size: 50
+              capacity_type: ON_DEMAND
+            
+            compute:
+              instance_types:
+                - c5.xlarge
+                - c5.2xlarge
+              min_size: 0
+              max_size: 20
+              desired_size: 2
+              disk_size: 100
+              capacity_type: SPOT
+            
+            memory:
+              instance_types:
+                - r5.large
+                - r5.xlarge
+              min_size: 0
+              max_size: 15
+              desired_size: 1
+              disk_size: 100
+              capacity_type: SPOT
+            
+            gpu:
+              instance_types:
+                - g4dn.xlarge
+                - g4dn.2xlarge
+              min_size: 0
+              max_size: 5
+              desired_size: 0
+              disk_size: 200
+              capacity_type: ON_DEMAND
+          
+          # Production-specific resource limits
+          resource_quotas:
+            requests_cpu: "50"
+            requests_memory: "100Gi"
+            limits_cpu: "100"
+            limits_memory: "200Gi"
+            requests_storage: "1Ti"
+            persistentvolumeclaims: "50"
+            pods: "100"
+            services: "20"
+            secrets: "50"
+            configmaps: "50"
+          
+          # High availability configuration
+          high_availability:
+            enabled: true
+            pod_disruption_budgets: true
+            anti_affinity_rules: true
+            multi_zone_deployment: true
+            rolling_updates: true
+            health_checks: true
+          
+          # Security configuration
+          security_configuration:
+            pod_security_standards: restricted
+            network_policies: enabled
+            rbac: enabled
+            service_mesh: istio
+            vulnerability_scanning: enabled
+            compliance_scanning: enabled
+            secrets_encryption: enabled
+            audit_logging: enabled
+          
+          # Backup and recovery
+          backup_configuration:
+            database_backup: true
+            application_backup: true
+            cross_region_replication: true
+            point_in_time_recovery: true
+            automated_restore_testing: true
+          
+          # Custom labels for resource management
+          custom_labels:
+            environment: production
+            tier: enterprise
+            criticality: high
+            sla: "99.9"
+            data_classification: confidential
+            backup_required: "true"
+            monitoring_required: "true"
+            compliance_required: "true"

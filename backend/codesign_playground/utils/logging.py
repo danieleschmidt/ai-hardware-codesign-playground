@@ -20,9 +20,10 @@ from contextlib import contextmanager
 class StructuredFormatter(logging.Formatter):
     """Formatter for structured JSON logging."""
     
-    def __init__(self, include_extra: bool = True):
+    def __init__(self, include_extra: bool = True, include_tracing: bool = True):
         super().__init__()
         self.include_extra = include_extra
+        self.include_tracing = include_tracing
     
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as structured JSON."""
@@ -34,6 +35,8 @@ class StructuredFormatter(logging.Formatter):
             "module": record.module,
             "function": record.funcName,
             "line": record.lineno,
+            "host": self._get_hostname(),
+            "service": "ai_hardware_codesign"
         }
         
         # Add process/thread info
@@ -41,6 +44,12 @@ class StructuredFormatter(logging.Formatter):
             log_data["process_id"] = record.process
         if record.thread:
             log_data["thread_id"] = record.thread
+        
+        # Add distributed tracing information
+        if self.include_tracing:
+            trace_info = self._get_trace_info()
+            if trace_info:
+                log_data["trace"] = trace_info
         
         # Add exception info if present
         if record.exc_info:
@@ -65,14 +74,44 @@ class StructuredFormatter(logging.Formatter):
                 log_data["extra"] = extra_fields
         
         return json.dumps(log_data, default=str, ensure_ascii=False)
+    
+    def _get_hostname(self) -> str:
+        """Get hostname for log entries."""
+        import socket
+        try:
+            return socket.gethostname()
+        except:
+            return "unknown"
+    
+    def _get_trace_info(self) -> Optional[Dict[str, str]]:
+        """Get current tracing information."""
+        try:
+            # Import here to avoid circular imports
+            from .distributed_tracing import get_tracer
+            
+            tracer = get_tracer()
+            active_span = tracer.get_active_span()
+            
+            if active_span:
+                return {
+                    "trace_id": active_span.context.trace_id,
+                    "span_id": active_span.context.span_id,
+                    "parent_span_id": active_span.context.parent_span_id,
+                    "operation": active_span.operation_name
+                }
+        except:
+            pass  # Gracefully handle import or other errors
+        
+        return None
 
 
 class CodesignLogger:
-    """Enhanced logger for the codesign platform."""
+    """Enhanced logger for the codesign platform with tracing support."""
     
     def __init__(self, name: str):
         self.logger = logging.getLogger(name)
         self.context_stack = []
+        self._correlation_id = None
     
     def debug(self, message: str, **kwargs) -> None:
         """Log debug message with context."""
@@ -101,7 +140,7 @@ class CodesignLogger:
         self._log(logging.CRITICAL, message, exc_info=exception is not None, **kwargs)
     
     def _log(self, level: int, message: str, **kwargs) -> None:
-        """Internal logging method with context injection."""
+        """Internal logging method with context and tracing injection."""
         # Add context from stack
         for context in self.context_stack:
             kwargs.update(context)
@@ -109,7 +148,56 @@ class CodesignLogger:
         # Add timestamp
         kwargs["log_timestamp"] = time.time()
         
+        # Add correlation ID from tracing if available
+        correlation_id = self._get_correlation_id()
+        if correlation_id:
+            kwargs["correlation_id"] = correlation_id
+        
+        # Add custom correlation ID if set
+        if self._correlation_id:
+            kwargs["custom_correlation_id"] = self._correlation_id
+        
+        # Add span information
+        span_info = self._get_span_info()
+        if span_info:
+            kwargs.update(span_info)
+        
         self.logger.log(level, message, extra=kwargs)
+    
+    def _get_correlation_id(self) -> Optional[str]:
+        """Get correlation ID from active tracing context."""
+        try:
+            from .distributed_tracing import get_correlation_id
+            return get_correlation_id()
+        except:
+            return None
+    
+    def _get_span_info(self) -> Dict[str, Any]:
+        """Get current span information."""
+        try:
+            from .distributed_tracing import get_tracer
+            
+            tracer = get_tracer()
+            active_span = tracer.get_active_span()
+            
+            if active_span:
+                return {
+                    "span_operation": active_span.operation_name,
+                    "span_type": active_span.span_type.value,
+                    "span_tags": active_span.tags
+                }
+        except:
+            pass
+        
+        return {}
+    
+    def set_correlation_id(self, correlation_id: str) -> None:
+        """Set custom correlation ID for this logger."""
+        self._correlation_id = correlation_id
+    
+    def clear_correlation_id(self) -> None:
+        """Clear custom correlation ID."""
+        self._correlation_id = None
     
     @contextmanager
     def context(self, **context_data):

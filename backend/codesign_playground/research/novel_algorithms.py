@@ -696,6 +696,689 @@ def get_neural_evolution(config: Optional[ExperimentConfig] = None) -> NeuralArc
     return _neural_evolution
 
 
+class BaselineComparison:
+    """Framework for comparing novel algorithms against established baselines."""
+    
+    def __init__(self):
+        """Initialize baseline comparison framework."""
+        self.baseline_algorithms = {
+            "random_search": self._random_search,
+            "grid_search": self._grid_search,
+            "genetic_algorithm": self._genetic_algorithm,
+            "simulated_annealing": self._simulated_annealing,
+            "particle_swarm": self._particle_swarm_optimization,
+        }
+        self.statistical_tests = [
+            "wilcoxon_signed_rank",
+            "mann_whitney_u", 
+            "kruskal_wallis",
+            "friedman_test"
+        ]
+    
+    def run_baseline_comparison(
+        self,
+        novel_algorithm_type: AlgorithmType,
+        objective_function: Callable,
+        search_space: Dict[str, Any],
+        baseline_algorithms: Optional[List[str]] = None,
+        num_runs: int = 10,
+        significance_level: float = 0.05
+    ) -> Dict[str, Any]:
+        """
+        Compare novel algorithm against baseline algorithms.
+        
+        Args:
+            novel_algorithm_type: Novel algorithm to test
+            objective_function: Objective function to optimize
+            search_space: Search space definition
+            baseline_algorithms: List of baseline algorithms to compare against
+            num_runs: Number of independent runs per algorithm
+            significance_level: Statistical significance level
+            
+        Returns:
+            Comprehensive comparison results
+        """
+        if baseline_algorithms is None:
+            baseline_algorithms = ["random_search", "genetic_algorithm", "simulated_annealing"]
+        
+        logger.info(f"Running baseline comparison for {novel_algorithm_type.value}")
+        
+        # Results storage
+        all_results = {}
+        
+        # Run novel algorithm
+        novel_results = self._run_algorithm_multiple_times(
+            novel_algorithm_type, objective_function, search_space, num_runs
+        )
+        all_results["novel_algorithm"] = {
+            "type": novel_algorithm_type.value,
+            "results": novel_results
+        }
+        
+        # Run baseline algorithms
+        for baseline_name in baseline_algorithms:
+            if baseline_name in self.baseline_algorithms:
+                baseline_results = self._run_baseline_multiple_times(
+                    baseline_name, objective_function, search_space, num_runs
+                )
+                all_results[baseline_name] = {
+                    "type": baseline_name,
+                    "results": baseline_results
+                }
+        
+        # Perform statistical analysis
+        statistical_analysis = self._perform_statistical_analysis(
+            all_results, significance_level
+        )
+        
+        # Generate comparison report
+        comparison_report = self._generate_comparison_report(
+            all_results, statistical_analysis
+        )
+        
+        return {
+            "algorithm_results": all_results,
+            "statistical_analysis": statistical_analysis,
+            "comparison_report": comparison_report,
+            "configuration": {
+                "num_runs": num_runs,
+                "significance_level": significance_level,
+                "baseline_algorithms": baseline_algorithms
+            }
+        }
+    
+    def _run_algorithm_multiple_times(
+        self,
+        algorithm_type: AlgorithmType,
+        objective_function: Callable,
+        search_space: Dict[str, Any],
+        num_runs: int
+    ) -> List[ExperimentResult]:
+        """Run novel algorithm multiple times."""
+        results = []
+        
+        for run in range(num_runs):
+            config = ExperimentConfig(
+                algorithm_type, 
+                max_generations=50, 
+                population_size=30,
+                seed=run
+            )
+            
+            if algorithm_type == AlgorithmType.QUANTUM_INSPIRED_OPTIMIZATION:
+                optimizer = get_quantum_optimizer(config)
+                result = optimizer.optimize(objective_function, search_space)
+            elif algorithm_type == AlgorithmType.NEURAL_ARCHITECTURE_EVOLUTION:
+                evolver = get_neural_evolution(config)
+                result = evolver.evolve_architecture(objective_function, search_space)
+            else:
+                # Create a generic result for other algorithm types
+                result = self._create_generic_result(algorithm_type, objective_function, search_space)
+            
+            results.append(result)
+        
+        return results
+    
+    def _run_baseline_multiple_times(
+        self,
+        baseline_name: str,
+        objective_function: Callable,
+        search_space: Dict[str, Any],
+        num_runs: int
+    ) -> List[Dict[str, Any]]:
+        """Run baseline algorithm multiple times."""
+        results = []
+        baseline_func = self.baseline_algorithms[baseline_name]
+        
+        for run in range(num_runs):
+            random.seed(run)  # Ensure reproducibility
+            result = baseline_func(objective_function, search_space, run)
+            results.append(result)
+        
+        return results
+    
+    def _random_search(self, objective_function: Callable, search_space: Dict[str, Any], seed: int) -> Dict[str, Any]:
+        """Implement random search baseline."""
+        random.seed(seed)
+        max_evaluations = 1500
+        
+        best_solution = None
+        best_fitness = float('-inf')
+        all_fitness = []
+        
+        start_time = time.time()
+        
+        for eval_count in range(max_evaluations):
+            # Generate random solution
+            solution = {}
+            for param, bounds in search_space.items():
+                if isinstance(bounds, tuple):
+                    solution[param] = random.uniform(bounds[0], bounds[1])
+                elif isinstance(bounds, list):
+                    solution[param] = random.choice(bounds)
+                else:
+                    solution[param] = random.uniform(0, 1)
+            
+            # Evaluate solution
+            fitness = objective_function(solution)
+            all_fitness.append(fitness)
+            
+            if fitness > best_fitness:
+                best_fitness = fitness
+                best_solution = solution.copy()
+        
+        execution_time = time.time() - start_time
+        
+        return {
+            "best_solution": best_solution,
+            "best_fitness": best_fitness,
+            "total_evaluations": max_evaluations,
+            "execution_time": execution_time,
+            "convergence_history": all_fitness,
+            "algorithm_type": "random_search"
+        }
+    
+    def _grid_search(self, objective_function: Callable, search_space: Dict[str, Any], seed: int) -> Dict[str, Any]:
+        """Implement grid search baseline."""
+        from itertools import product
+        
+        start_time = time.time()
+        
+        # Create grid for each parameter
+        param_grids = {}
+        for param, bounds in search_space.items():
+            if isinstance(bounds, tuple):
+                # Create 10-point grid for continuous parameters
+                param_grids[param] = [bounds[0] + i * (bounds[1] - bounds[0]) / 9 for i in range(10)]
+            elif isinstance(bounds, list):
+                param_grids[param] = bounds
+            else:
+                param_grids[param] = [0.1 * i for i in range(11)]
+        
+        best_solution = None
+        best_fitness = float('-inf')
+        evaluation_count = 0
+        all_fitness = []
+        
+        # Limit total evaluations for large grids
+        max_evaluations = 1500
+        
+        param_names = list(param_grids.keys())
+        param_values = list(param_grids.values())
+        
+        for combination in product(*param_values):
+            if evaluation_count >= max_evaluations:
+                break
+                
+            solution = dict(zip(param_names, combination))
+            fitness = objective_function(solution)
+            all_fitness.append(fitness)
+            evaluation_count += 1
+            
+            if fitness > best_fitness:
+                best_fitness = fitness
+                best_solution = solution.copy()
+        
+        execution_time = time.time() - start_time
+        
+        return {
+            "best_solution": best_solution,
+            "best_fitness": best_fitness,
+            "total_evaluations": evaluation_count,
+            "execution_time": execution_time,
+            "convergence_history": all_fitness,
+            "algorithm_type": "grid_search"
+        }
+    
+    def _genetic_algorithm(self, objective_function: Callable, search_space: Dict[str, Any], seed: int) -> Dict[str, Any]:
+        """Implement genetic algorithm baseline."""
+        random.seed(seed)
+        
+        population_size = 30
+        max_generations = 50
+        mutation_rate = 0.1
+        crossover_rate = 0.8
+        
+        start_time = time.time()
+        
+        # Initialize population
+        population = []
+        for _ in range(population_size):
+            individual = {}
+            for param, bounds in search_space.items():
+                if isinstance(bounds, tuple):
+                    individual[param] = random.uniform(bounds[0], bounds[1])
+                elif isinstance(bounds, list):
+                    individual[param] = random.choice(bounds)
+                else:
+                    individual[param] = random.uniform(0, 1)
+            population.append(individual)
+        
+        best_solution = None
+        best_fitness = float('-inf')
+        convergence_history = []
+        total_evaluations = 0
+        
+        for generation in range(max_generations):
+            # Evaluate population
+            fitness_values = []
+            for individual in population:
+                fitness = objective_function(individual)
+                fitness_values.append(fitness)
+                total_evaluations += 1
+                
+                if fitness > best_fitness:
+                    best_fitness = fitness
+                    best_solution = individual.copy()
+            
+            convergence_history.append(max(fitness_values))
+            
+            # Selection, crossover, mutation
+            new_population = []
+            
+            # Elitism - keep best 10%
+            elite_count = population_size // 10
+            elite_indices = sorted(range(len(fitness_values)), key=lambda i: fitness_values[i], reverse=True)[:elite_count]
+            for idx in elite_indices:
+                new_population.append(population[idx].copy())
+            
+            # Generate offspring
+            while len(new_population) < population_size:
+                # Tournament selection
+                parent1 = self._tournament_selection(population, fitness_values)
+                parent2 = self._tournament_selection(population, fitness_values)
+                
+                # Crossover
+                if random.random() < crossover_rate:
+                    child = self._crossover(parent1, parent2, search_space)
+                else:
+                    child = parent1.copy()
+                
+                # Mutation
+                if random.random() < mutation_rate:
+                    child = self._mutate(child, search_space)
+                
+                new_population.append(child)
+            
+            population = new_population
+        
+        execution_time = time.time() - start_time
+        
+        return {
+            "best_solution": best_solution,
+            "best_fitness": best_fitness,
+            "total_evaluations": total_evaluations,
+            "execution_time": execution_time,
+            "convergence_history": convergence_history,
+            "algorithm_type": "genetic_algorithm"
+        }
+    
+    def _simulated_annealing(self, objective_function: Callable, search_space: Dict[str, Any], seed: int) -> Dict[str, Any]:
+        """Implement simulated annealing baseline."""
+        random.seed(seed)
+        
+        max_evaluations = 1500
+        initial_temp = 100.0
+        final_temp = 0.1
+        
+        start_time = time.time()
+        
+        # Initialize solution
+        current_solution = {}
+        for param, bounds in search_space.items():
+            if isinstance(bounds, tuple):
+                current_solution[param] = random.uniform(bounds[0], bounds[1])
+            elif isinstance(bounds, list):
+                current_solution[param] = random.choice(bounds)
+            else:
+                current_solution[param] = random.uniform(0, 1)
+        
+        current_fitness = objective_function(current_solution)
+        best_solution = current_solution.copy()
+        best_fitness = current_fitness
+        
+        convergence_history = [current_fitness]
+        
+        for evaluation in range(1, max_evaluations):
+            # Temperature schedule
+            temp = initial_temp * ((final_temp / initial_temp) ** (evaluation / max_evaluations))
+            
+            # Generate neighbor
+            neighbor = self._generate_neighbor(current_solution, search_space)
+            neighbor_fitness = objective_function(neighbor)
+            
+            # Accept or reject
+            if neighbor_fitness > current_fitness or random.random() < math.exp((neighbor_fitness - current_fitness) / temp):
+                current_solution = neighbor
+                current_fitness = neighbor_fitness
+            
+            if current_fitness > best_fitness:
+                best_fitness = current_fitness
+                best_solution = current_solution.copy()
+            
+            convergence_history.append(best_fitness)
+        
+        execution_time = time.time() - start_time
+        
+        return {
+            "best_solution": best_solution,
+            "best_fitness": best_fitness,
+            "total_evaluations": max_evaluations,
+            "execution_time": execution_time,
+            "convergence_history": convergence_history,
+            "algorithm_type": "simulated_annealing"
+        }
+    
+    def _particle_swarm_optimization(self, objective_function: Callable, search_space: Dict[str, Any], seed: int) -> Dict[str, Any]:
+        """Implement particle swarm optimization baseline."""
+        random.seed(seed)
+        
+        swarm_size = 30
+        max_iterations = 50
+        w = 0.7  # Inertia weight
+        c1 = 1.5  # Cognitive parameter
+        c2 = 1.5  # Social parameter
+        
+        start_time = time.time()
+        
+        # Initialize swarm
+        particles = []
+        velocities = []
+        personal_best = []
+        personal_best_fitness = []
+        
+        for _ in range(swarm_size):
+            particle = {}
+            velocity = {}
+            for param, bounds in search_space.items():
+                if isinstance(bounds, tuple):
+                    particle[param] = random.uniform(bounds[0], bounds[1])
+                    velocity[param] = random.uniform(-abs(bounds[1] - bounds[0]) * 0.1, abs(bounds[1] - bounds[0]) * 0.1)
+                elif isinstance(bounds, list):
+                    particle[param] = random.choice(bounds)
+                    velocity[param] = 0
+                else:
+                    particle[param] = random.uniform(0, 1)
+                    velocity[param] = random.uniform(-0.1, 0.1)
+            
+            particles.append(particle)
+            velocities.append(velocity)
+            personal_best.append(particle.copy())
+            personal_best_fitness.append(objective_function(particle))
+        
+        global_best = personal_best[0].copy()
+        global_best_fitness = personal_best_fitness[0]
+        
+        # Find initial global best
+        for i in range(swarm_size):
+            if personal_best_fitness[i] > global_best_fitness:
+                global_best_fitness = personal_best_fitness[i]
+                global_best = personal_best[i].copy()
+        
+        convergence_history = [global_best_fitness]
+        total_evaluations = swarm_size
+        
+        for iteration in range(max_iterations):
+            for i in range(swarm_size):
+                # Update velocity and position
+                for param in particles[i]:
+                    if isinstance(search_space[param], tuple):
+                        r1, r2 = random.random(), random.random()
+                        velocities[i][param] = (w * velocities[i][param] + 
+                                               c1 * r1 * (personal_best[i][param] - particles[i][param]) +
+                                               c2 * r2 * (global_best[param] - particles[i][param]))
+                        particles[i][param] += velocities[i][param]
+                        
+                        # Boundary handling
+                        bounds = search_space[param]
+                        particles[i][param] = max(bounds[0], min(bounds[1], particles[i][param]))
+                
+                # Evaluate particle
+                fitness = objective_function(particles[i])
+                total_evaluations += 1
+                
+                # Update personal best
+                if fitness > personal_best_fitness[i]:
+                    personal_best_fitness[i] = fitness
+                    personal_best[i] = particles[i].copy()
+                    
+                    # Update global best
+                    if fitness > global_best_fitness:
+                        global_best_fitness = fitness
+                        global_best = particles[i].copy()
+            
+            convergence_history.append(global_best_fitness)
+        
+        execution_time = time.time() - start_time
+        
+        return {
+            "best_solution": global_best,
+            "best_fitness": global_best_fitness,
+            "total_evaluations": total_evaluations,
+            "execution_time": execution_time,
+            "convergence_history": convergence_history,
+            "algorithm_type": "particle_swarm_optimization"
+        }
+    
+    def _tournament_selection(self, population: List[Dict], fitness_values: List[float], tournament_size: int = 3) -> Dict:
+        """Tournament selection for genetic algorithm."""
+        tournament_indices = random.sample(range(len(population)), min(tournament_size, len(population)))
+        best_idx = max(tournament_indices, key=lambda i: fitness_values[i])
+        return population[best_idx].copy()
+    
+    def _crossover(self, parent1: Dict, parent2: Dict, search_space: Dict[str, Any]) -> Dict:
+        """Single-point crossover for genetic algorithm."""
+        child = {}
+        for param in parent1:
+            if random.random() < 0.5:
+                child[param] = parent1[param]
+            else:
+                child[param] = parent2[param]
+        return child
+    
+    def _mutate(self, individual: Dict, search_space: Dict[str, Any]) -> Dict:
+        """Gaussian mutation for genetic algorithm."""
+        mutated = individual.copy()
+        for param, bounds in search_space.items():
+            if isinstance(bounds, tuple) and random.random() < 0.1:
+                # Gaussian mutation
+                mutation_strength = (bounds[1] - bounds[0]) * 0.1
+                mutated[param] += random.gauss(0, mutation_strength)
+                mutated[param] = max(bounds[0], min(bounds[1], mutated[param]))
+        return mutated
+    
+    def _generate_neighbor(self, solution: Dict, search_space: Dict[str, Any]) -> Dict:
+        """Generate neighbor solution for simulated annealing."""
+        neighbor = solution.copy()
+        
+        # Modify one random parameter
+        param = random.choice(list(solution.keys()))
+        bounds = search_space[param]
+        
+        if isinstance(bounds, tuple):
+            # Add small random perturbation
+            perturbation = random.gauss(0, (bounds[1] - bounds[0]) * 0.1)
+            neighbor[param] = max(bounds[0], min(bounds[1], solution[param] + perturbation))
+        elif isinstance(bounds, list):
+            neighbor[param] = random.choice(bounds)
+        
+        return neighbor
+    
+    def _create_generic_result(self, algorithm_type: AlgorithmType, objective_function: Callable, search_space: Dict[str, Any]) -> ExperimentResult:
+        """Create generic result for placeholder algorithms."""
+        # Run a simple random search as placeholder
+        best_solution = {}
+        for param, bounds in search_space.items():
+            if isinstance(bounds, tuple):
+                best_solution[param] = random.uniform(bounds[0], bounds[1])
+            elif isinstance(bounds, list):
+                best_solution[param] = random.choice(bounds)
+            else:
+                best_solution[param] = random.uniform(0, 1)
+        
+        best_fitness = objective_function(best_solution)
+        
+        return ExperimentResult(
+            algorithm_type=algorithm_type,
+            best_solution=best_solution,
+            best_fitness=best_fitness,
+            convergence_generation=random.randint(10, 40),
+            total_evaluations=random.randint(500, 1500),
+            execution_time=random.uniform(1.0, 10.0),
+            diversity_metrics={"diversity": random.uniform(0.1, 0.5)},
+            novel_insights=[f"Generic result for {algorithm_type.value}"]
+        )
+    
+    def _perform_statistical_analysis(self, all_results: Dict[str, Any], significance_level: float) -> Dict[str, Any]:
+        """Perform statistical analysis on algorithm comparison."""
+        try:
+            from scipy import stats
+        except ImportError:
+            logger.warning("SciPy not available for statistical analysis")
+            return {"error": "SciPy not available for statistical analysis"}
+        
+        # Extract fitness values for each algorithm
+        algorithm_fitness = {}
+        
+        for alg_name, alg_data in all_results.items():
+            if alg_name == "novel_algorithm":
+                fitness_values = [result.best_fitness for result in alg_data["results"]]
+            else:
+                fitness_values = [result["best_fitness"] for result in alg_data["results"]]
+            algorithm_fitness[alg_name] = fitness_values
+        
+        statistical_results = {}
+        
+        # Pairwise comparisons between novel algorithm and baselines
+        novel_fitness = algorithm_fitness["novel_algorithm"]
+        
+        for baseline_name, baseline_fitness in algorithm_fitness.items():
+            if baseline_name == "novel_algorithm":
+                continue
+            
+            # Wilcoxon signed-rank test (paired)
+            if len(novel_fitness) == len(baseline_fitness):
+                try:
+                    wilcoxon_stat, wilcoxon_p = stats.wilcoxon(novel_fitness, baseline_fitness)
+                    statistical_results[f"wilcoxon_vs_{baseline_name}"] = {
+                        "statistic": wilcoxon_stat,
+                        "p_value": wilcoxon_p,
+                        "significant": wilcoxon_p < significance_level,
+                        "interpretation": "Novel algorithm significantly better" if wilcoxon_p < significance_level and statistics.mean(novel_fitness) > statistics.mean(baseline_fitness) else "No significant difference"
+                    }
+                except Exception as e:
+                    logger.warning(f"Wilcoxon test failed for {baseline_name}: {e}")
+            
+            # Mann-Whitney U test (unpaired)
+            try:
+                mannwhitney_stat, mannwhitney_p = stats.mannwhitneyu(novel_fitness, baseline_fitness, alternative='two-sided')
+                statistical_results[f"mannwhitney_vs_{baseline_name}"] = {
+                    "statistic": mannwhitney_stat,
+                    "p_value": mannwhitney_p,
+                    "significant": mannwhitney_p < significance_level,
+                    "interpretation": "Novel algorithm significantly different" if mannwhitney_p < significance_level else "No significant difference"
+                }
+            except Exception as e:
+                logger.warning(f"Mann-Whitney test failed for {baseline_name}: {e}")
+        
+        # Overall Kruskal-Wallis test
+        try:
+            all_fitness_groups = list(algorithm_fitness.values())
+            kruskal_stat, kruskal_p = stats.kruskal(*all_fitness_groups)
+            statistical_results["kruskal_wallis"] = {
+                "statistic": kruskal_stat,
+                "p_value": kruskal_p,
+                "significant": kruskal_p < significance_level,
+                "interpretation": "Significant difference between algorithms" if kruskal_p < significance_level else "No significant difference"
+            }
+        except Exception as e:
+            logger.warning(f"Kruskal-Wallis test failed: {e}")
+        
+        # Descriptive statistics
+        descriptive_stats = {}
+        for alg_name, fitness_values in algorithm_fitness.items():
+            descriptive_stats[alg_name] = {
+                "mean": statistics.mean(fitness_values),
+                "median": statistics.median(fitness_values),
+                "std": statistics.stdev(fitness_values) if len(fitness_values) > 1 else 0,
+                "min": min(fitness_values),
+                "max": max(fitness_values),
+                "q1": statistics.quantiles(fitness_values, n=4)[0] if len(fitness_values) >= 4 else min(fitness_values),
+                "q3": statistics.quantiles(fitness_values, n=4)[2] if len(fitness_values) >= 4 else max(fitness_values)
+            }
+        
+        return {
+            "statistical_tests": statistical_results,
+            "descriptive_statistics": descriptive_stats,
+            "significance_level": significance_level
+        }
+    
+    def _generate_comparison_report(self, all_results: Dict[str, Any], statistical_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate comprehensive comparison report."""
+        novel_alg_name = all_results["novel_algorithm"]["type"]
+        
+        # Performance summary
+        if "descriptive_statistics" in statistical_analysis:
+            desc_stats = statistical_analysis["descriptive_statistics"]
+            performance_ranking = sorted(
+                desc_stats.items(),
+                key=lambda x: x[1]["mean"],
+                reverse=True
+            )
+            
+            novel_rank = next(i for i, (name, _) in enumerate(performance_ranking) if name == "novel_algorithm") + 1
+            total_algorithms = len(performance_ranking)
+            
+            # Count significant improvements
+            significant_improvements = 0
+            if "statistical_tests" in statistical_analysis:
+                for test_name, test_result in statistical_analysis["statistical_tests"].items():
+                    if "vs_" in test_name and test_result.get("significant", False):
+                        if desc_stats["novel_algorithm"]["mean"] > desc_stats[test_name.split("vs_")[1]]["mean"]:
+                            significant_improvements += 1
+            
+            report = {
+                "summary": f"Novel algorithm ({novel_alg_name}) ranked {novel_rank} out of {total_algorithms} algorithms",
+                "performance_ranking": performance_ranking,
+                "novel_algorithm_rank": novel_rank,
+                "significant_improvements": significant_improvements,
+                "total_comparisons": total_algorithms - 1,
+                "improvement_rate": significant_improvements / max(1, total_algorithms - 1),
+                "recommendations": self._generate_recommendations(novel_rank, significant_improvements, total_algorithms - 1)
+            }
+        else:
+            report = {
+                "summary": "Statistical analysis not available",
+                "error": "Could not generate performance comparison"
+            }
+        
+        return report
+    
+    def _generate_recommendations(self, rank: int, significant_improvements: int, total_comparisons: int) -> List[str]:
+        """Generate recommendations based on comparison results."""
+        recommendations = []
+        
+        if rank == 1:
+            recommendations.append("Novel algorithm shows superior performance - consider publication")
+        elif rank <= total_comparisons // 2:
+            recommendations.append("Novel algorithm shows competitive performance")
+        else:
+            recommendations.append("Novel algorithm needs improvement - analyze failure modes")
+        
+        improvement_rate = significant_improvements / max(1, total_comparisons)
+        if improvement_rate >= 0.7:
+            recommendations.append("Strong statistical evidence of improvement")
+        elif improvement_rate >= 0.3:
+            recommendations.append("Moderate evidence of improvement - consider larger sample size")
+        else:
+            recommendations.append("Limited evidence of improvement - investigate algorithmic limitations")
+        
+        if significant_improvements == 0:
+            recommendations.append("No significant improvements detected - consider algorithmic modifications")
+        
+        return recommendations
+
+
 def run_comparative_study(
     algorithms: List[AlgorithmType],
     objective_function: Callable,
@@ -714,35 +1397,52 @@ def run_comparative_study(
     Returns:
         Dictionary of algorithm results
     """
+    baseline_comparison = BaselineComparison()
     results = defaultdict(list)
     
     for algorithm_type in algorithms:
         logger.info(f"Running comparative study for {algorithm_type.value}")
         
-        config = ExperimentConfig(algorithm_type, max_generations=50, population_size=30)
-        
-        for run in range(num_runs):
-            config.seed = run  # Different seed for each run
-            
-            if algorithm_type == AlgorithmType.QUANTUM_INSPIRED_OPTIMIZATION:
-                optimizer = get_quantum_optimizer(config)
-                result = optimizer.optimize(objective_function, search_space)
-            elif algorithm_type == AlgorithmType.NEURAL_ARCHITECTURE_EVOLUTION:
-                evolver = get_neural_evolution(config)
-                result = evolver.evolve_architecture(objective_function, search_space)
-            else:
-                # Placeholder for other algorithms
-                result = ExperimentResult(
-                    algorithm_type=algorithm_type,
-                    best_solution={},
-                    best_fitness=random.uniform(0.5, 0.9),
-                    convergence_generation=random.randint(10, 40),
-                    total_evaluations=random.randint(500, 1500),
-                    execution_time=random.uniform(1.0, 10.0),
-                    diversity_metrics={"diversity": random.uniform(0.1, 0.5)},
-                    novel_insights=[f"Placeholder insight for {algorithm_type.value}"]
-                )
-            
-            results[algorithm_type.value].append(result)
+        algorithm_results = baseline_comparison._run_algorithm_multiple_times(
+            algorithm_type, objective_function, search_space, num_runs
+        )
+        results[algorithm_type.value] = algorithm_results
     
     return dict(results)
+
+
+def run_algorithm_validation(
+    algorithm_type: AlgorithmType,
+    objective_function: Callable,
+    search_space: Dict[str, Any],
+    validation_config: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Run comprehensive validation study for a novel algorithm.
+    
+    Args:
+        algorithm_type: Algorithm to validate
+        objective_function: Objective function to optimize
+        search_space: Search space definition
+        validation_config: Configuration for validation study
+        
+    Returns:
+        Comprehensive validation results
+    """
+    if validation_config is None:
+        validation_config = {
+            "num_runs": 10,
+            "baseline_algorithms": ["random_search", "genetic_algorithm", "simulated_annealing"],
+            "significance_level": 0.05
+        }
+    
+    baseline_comparison = BaselineComparison()
+    
+    return baseline_comparison.run_baseline_comparison(
+        algorithm_type,
+        objective_function,
+        search_space,
+        validation_config.get("baseline_algorithms"),
+        validation_config.get("num_runs", 10),
+        validation_config.get("significance_level", 0.05)
+    )

@@ -9,8 +9,10 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from pathlib import Path
 import json
+import math
 
 from ..utils.logging import get_logger
+from ..utils.monitoring import record_metric
 
 logger = get_logger(__name__)
 
@@ -242,14 +244,18 @@ class VectorProcessor:
     def estimate_performance(
         self,
         workload_ops: int,
-        frequency_mhz: float = 800.0
+        frequency_mhz: float = 800.0,
+        workload_type: str = "general",
+        memory_bandwidth_gb_s: float = 25.6
     ) -> Dict[str, float]:
         """
-        Estimate performance for given workload.
+        Enhanced performance estimation for given workload.
         
         Args:
             workload_ops: Number of operations in workload
             frequency_mhz: Operating frequency
+            workload_type: Type of workload ("cnn", "transformer", "rnn", "mlp", "general")
+            memory_bandwidth_gb_s: Available memory bandwidth
             
         Returns:
             Performance metrics
@@ -258,21 +264,55 @@ class VectorProcessor:
         peak_ops_per_cycle = self.num_lanes
         peak_ops_per_second = peak_ops_per_cycle * frequency_mhz * 1e6
         
-        # Estimate actual performance with utilization factor
-        utilization = self._estimate_utilization()
-        actual_ops_per_second = peak_ops_per_second * utilization
+        # Enhanced utilization estimation based on workload type
+        base_utilization = self._estimate_utilization()
+        workload_utilization = self._get_workload_utilization_factor(workload_type)
+        vector_efficiency = self._calculate_vector_efficiency()
         
-        # Calculate latency
-        cycles_needed = workload_ops / (peak_ops_per_cycle * utilization)
-        latency_ms = cycles_needed / (frequency_mhz * 1000)
+        # Memory bandwidth considerations
+        bytes_per_op = self._estimate_bytes_per_operation(workload_type)
+        memory_bound_ops_per_second = (memory_bandwidth_gb_s * 1e9) / bytes_per_op
+        
+        # Determine if compute-bound or memory-bound
+        compute_bound_ops_per_second = peak_ops_per_second * base_utilization * workload_utilization * vector_efficiency
+        actual_ops_per_second = min(compute_bound_ops_per_second, memory_bound_ops_per_second)
+        
+        # Calculate performance metrics
+        is_memory_bound = actual_ops_per_second == memory_bound_ops_per_second
+        effective_utilization = actual_ops_per_second / peak_ops_per_second
+        
+        # Calculate latency including pipeline and memory effects
+        base_cycles = workload_ops / (peak_ops_per_cycle * effective_utilization)
+        pipeline_overhead = self._estimate_pipeline_overhead(workload_type)
+        memory_stall_cycles = self._estimate_memory_stalls(workload_ops, workload_type, frequency_mhz, memory_bandwidth_gb_s)
+        
+        total_cycles = base_cycles + pipeline_overhead + memory_stall_cycles
+        latency_ms = total_cycles / (frequency_mhz * 1000)
+        
+        # Power estimation
+        power_w = self._estimate_power_consumption(frequency_mhz, effective_utilization)
+        
+        # Record metrics
+        record_metric("vector_processor_utilization", effective_utilization, "gauge")
+        record_metric("vector_processor_memory_bound", 1 if is_memory_bound else 0, "gauge")
+        record_metric("vector_processor_power", power_w, "gauge")
         
         return {
             "peak_ops_per_second": peak_ops_per_second,
             "actual_ops_per_second": actual_ops_per_second,
-            "utilization": utilization,
+            "compute_bound_ops_per_second": compute_bound_ops_per_second,
+            "memory_bound_ops_per_second": memory_bound_ops_per_second,
+            "utilization": effective_utilization,
+            "is_memory_bound": is_memory_bound,
             "latency_ms": latency_ms,
             "throughput_fps": 1000 / latency_ms if latency_ms > 0 else 0,
-            "vector_efficiency": self._calculate_vector_efficiency(),
+            "vector_efficiency": vector_efficiency,
+            "workload_utilization": workload_utilization,
+            "pipeline_overhead_cycles": pipeline_overhead,
+            "memory_stall_cycles": memory_stall_cycles,
+            "power_w": power_w,
+            "energy_per_op_pj": (power_w * 1e12) / actual_ops_per_second if actual_ops_per_second > 0 else 0,
+            "arithmetic_intensity": 1.0 / bytes_per_op,
         }
     
     def _initialize_vector_extensions(self) -> None:
@@ -375,12 +415,113 @@ class VectorProcessor:
     def _calculate_vector_efficiency(self) -> float:
         """Calculate vector processing efficiency."""
         # Factor in the number of custom instructions
-        custom_inst_factor = 1.0 + (len(self.custom_instructions) * 0.1)
+        custom_inst_factor = 1.0 + (len(self.custom_instructions) * 0.05)
         
-        # Factor in lane count efficiency
-        lane_efficiency = min(1.0, self.num_lanes / 16.0)  # Optimal around 16 lanes
+        # Factor in lane count efficiency (sweet spot around 8-16 lanes)
+        if self.num_lanes <= 4:
+            lane_efficiency = 0.7
+        elif self.num_lanes <= 8:
+            lane_efficiency = 0.85
+        elif self.num_lanes <= 16:
+            lane_efficiency = 0.95
+        elif self.num_lanes <= 32:
+            lane_efficiency = 0.9
+        else:
+            lane_efficiency = 0.8  # Diminishing returns for very wide vectors
         
-        return min(1.0, lane_efficiency * custom_inst_factor * 0.9)
+        # Vector length efficiency
+        if self.vector_length >= 512:
+            vlen_efficiency = 0.95
+        elif self.vector_length >= 256:
+            vlen_efficiency = 0.9
+        else:
+            vlen_efficiency = 0.8
+        
+        return min(1.0, lane_efficiency * vlen_efficiency * custom_inst_factor)
+    
+    def _get_workload_utilization_factor(self, workload_type: str) -> float:
+        """Get utilization factor based on workload characteristics."""
+        workload_factors = {
+            "cnn": 0.85,        # Good vectorization with conv operations
+            "transformer": 0.75, # Attention operations have dependencies
+            "rnn": 0.6,         # Sequential dependencies limit vectorization
+            "mlp": 0.9,         # Dense operations vectorize well
+            "general": 0.8,     # Average mixed workload
+        }
+        return workload_factors.get(workload_type, 0.8)
+    
+    def _estimate_bytes_per_operation(self, workload_type: str) -> float:
+        """Estimate memory bytes per operation for different workloads."""
+        # Based on typical AI workload characteristics
+        bytes_per_element = self.data_width // 8
+        
+        workload_memory_patterns = {
+            "cnn": 2.5,         # Conv operations: weights + activations
+            "transformer": 3.0,  # Attention: Q, K, V matrices
+            "rnn": 4.0,         # State + input + output vectors
+            "mlp": 2.0,         # Weight matrix + activations
+            "general": 2.5,     # Average
+        }
+        
+        multiplier = workload_memory_patterns.get(workload_type, 2.5)
+        return bytes_per_element * multiplier
+    
+    def _estimate_pipeline_overhead(self, workload_type: str) -> float:
+        """Estimate pipeline overhead cycles."""
+        base_pipeline_depth = 5  # Typical vector processor pipeline
+        
+        # Different workloads have different pipeline characteristics
+        if workload_type == "cnn":
+            return base_pipeline_depth * 1.2  # Conv ops have longer pipelines
+        elif workload_type == "transformer":
+            return base_pipeline_depth * 1.5  # Complex attention operations
+        elif workload_type == "rnn":
+            return base_pipeline_depth * 1.8  # Sequential dependencies
+        else:
+            return base_pipeline_depth
+    
+    def _estimate_memory_stalls(
+        self, 
+        workload_ops: int, 
+        workload_type: str,
+        frequency_mhz: float,
+        memory_bandwidth_gb_s: float
+    ) -> float:
+        """Estimate memory stall cycles."""
+        bytes_per_op = self._estimate_bytes_per_operation(workload_type)
+        total_bytes = workload_ops * bytes_per_op
+        
+        # Calculate memory access time
+        memory_access_time_cycles = (total_bytes / (memory_bandwidth_gb_s * 1e9)) * (frequency_mhz * 1e6)
+        
+        # Overlap factor - how much memory access overlaps with computation
+        overlap_factors = {
+            "cnn": 0.7,         # Good prefetching for regular access patterns
+            "transformer": 0.5,  # Irregular attention patterns
+            "rnn": 0.3,         # Sequential access with dependencies
+            "mlp": 0.8,         # Regular matrix access patterns
+            "general": 0.6,
+        }
+        
+        overlap_factor = overlap_factors.get(workload_type, 0.6)
+        stall_cycles = memory_access_time_cycles * (1 - overlap_factor)
+        
+        return max(0, stall_cycles)
+    
+    def _estimate_power_consumption(self, frequency_mhz: float, utilization: float) -> float:
+        """Estimate power consumption."""
+        # Base power model for vector processor
+        static_power_w = 0.5  # Static power
+        
+        # Dynamic power scales with frequency and utilization
+        dynamic_power_base = 2.0  # Base dynamic power at 800MHz, 100% utilization
+        freq_factor = (frequency_mhz / 800.0) ** 2.5  # Voltage scaling
+        lane_factor = self.num_lanes / 8.0  # Scale with lane count
+        
+        dynamic_power_w = dynamic_power_base * freq_factor * lane_factor * utilization
+        
+        total_power_w = static_power_w + dynamic_power_w
+        return total_power_w
     
     def _generate_vector_processor_rtl(self) -> str:
         """Generate SystemVerilog RTL for vector processor."""
