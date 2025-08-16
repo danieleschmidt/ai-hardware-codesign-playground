@@ -1,0 +1,327 @@
+---
+# AI Hardware Co-Design Playground - Production Setup Playbook
+# Comprehensive production environment configuration and deployment
+
+- name: AI Hardware Co-Design Playground Production Setup
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    # Environment configuration
+    environment: production
+    cluster_name: "{{ project_name }}-{{ environment }}"
+    namespace: "{{ cluster_name }}-namespace"
+    
+    # Application configuration
+    app_version: "{{ app_version | default('latest') }}"
+    registry: "{{ docker_registry | default('localhost') }}"
+    
+    # Security configuration
+    enable_security_scanning: true
+    enable_compliance_checks: true
+    enable_vulnerability_assessment: true
+    
+    # Monitoring configuration
+    enable_monitoring_stack: true
+    enable_alerting: true
+    enable_log_aggregation: true
+    
+    # Backup configuration
+    enable_automated_backup: true
+    backup_schedule: "0 2 * * *"  # Daily at 2 AM
+    backup_retention_days: 90
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - project_name is defined
+          - kubernetes_context is defined
+          - postgres_password is defined
+          - redis_password is defined
+          - secret_key is defined
+        fail_msg: "Required variables are not defined. Check your inventory or vars file."
+
+    - name: Set Kubernetes context
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        name: default
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path | default('~/.kube/config') }}"
+        K8S_CONTEXT: "{{ kubernetes_context }}"
+
+    - name: Verify cluster connectivity
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+      register: cluster_nodes
+      failed_when: cluster_nodes.resources | length == 0
+
+    - name: Display cluster information
+      ansible.builtin.debug:
+        msg: "Connected to cluster with {{ cluster_nodes.resources | length }} nodes"
+
+  tasks:
+    # Infrastructure Preparation
+    - name: Create namespace and RBAC
+      ansible.builtin.include_tasks: tasks/namespace-setup.yml
+
+    - name: Setup storage classes
+      ansible.builtin.include_tasks: tasks/storage-setup.yml
+
+    - name: Configure network policies
+      ansible.builtin.include_tasks: tasks/network-policies.yml
+
+    - name: Setup secrets management
+      ansible.builtin.include_tasks: tasks/secrets-management.yml
+
+    # Database Deployment
+    - name: Deploy PostgreSQL cluster
+      ansible.builtin.include_tasks: tasks/postgres-deployment.yml
+      when: deploy_postgres | default(true)
+
+    - name: Deploy Redis cluster
+      ansible.builtin.include_tasks: tasks/redis-deployment.yml
+      when: deploy_redis | default(true)
+
+    # Application Deployment
+    - name: Deploy application services
+      ansible.builtin.include_tasks: tasks/application-deployment.yml
+
+    - name: Configure auto-scaling
+      ansible.builtin.include_tasks: tasks/autoscaling-setup.yml
+
+    - name: Setup ingress and load balancing
+      ansible.builtin.include_tasks: tasks/ingress-setup.yml
+
+    # Monitoring and Observability
+    - name: Deploy monitoring stack
+      ansible.builtin.include_tasks: tasks/monitoring-deployment.yml
+      when: enable_monitoring_stack
+
+    - name: Configure alerting
+      ansible.builtin.include_tasks: tasks/alerting-setup.yml
+      when: enable_alerting
+
+    - name: Setup log aggregation
+      ansible.builtin.include_tasks: tasks/logging-setup.yml
+      when: enable_log_aggregation
+
+    # Security Configuration
+    - name: Deploy security tools
+      ansible.builtin.include_tasks: tasks/security-deployment.yml
+      when: enable_security_scanning
+
+    - name: Configure compliance monitoring
+      ansible.builtin.include_tasks: tasks/compliance-setup.yml
+      when: enable_compliance_checks
+
+    - name: Setup vulnerability scanning
+      ansible.builtin.include_tasks: tasks/vulnerability-scanning.yml
+      when: enable_vulnerability_assessment
+
+    # Backup and Recovery
+    - name: Configure backup system
+      ansible.builtin.include_tasks: tasks/backup-setup.yml
+      when: enable_automated_backup
+
+    - name: Setup disaster recovery
+      ansible.builtin.include_tasks: tasks/disaster-recovery.yml
+
+    # Performance Optimization
+    - name: Configure performance monitoring
+      ansible.builtin.include_tasks: tasks/performance-optimization.yml
+
+    - name: Setup caching layers
+      ansible.builtin.include_tasks: tasks/caching-setup.yml
+
+    # Final Validation
+    - name: Run production readiness checks
+      ansible.builtin.include_tasks: tasks/production-validation.yml
+
+    - name: Generate deployment report
+      ansible.builtin.include_tasks: tasks/deployment-report.yml
+
+  post_tasks:
+    - name: Wait for all deployments to be ready
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ namespace }}"
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 600
+      register: deployment_status
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          Deployment Summary:
+          - Environment: {{ environment }}
+          - Namespace: {{ namespace }}
+          - Application Version: {{ app_version }}
+          - Deployments: {{ deployment_status.resources | length }}
+          - Status: Ready
+          
+    - name: Generate post-deployment tasks
+      ansible.builtin.debug:
+        msg: |
+          Post-deployment tasks:
+          1. Verify application endpoints
+          2. Run integration tests
+          3. Configure monitoring dashboards
+          4. Update documentation
+          5. Notify stakeholders
+
+  handlers:
+    - name: restart monitoring services
+      kubernetes.core.k8s:
+        state: restarted
+        api_version: apps/v1
+        kind: Deployment
+        namespace: monitoring
+        name: "{{ item }}"
+      loop:
+        - prometheus
+        - grafana
+        - alertmanager
+
+    - name: reload ingress controller
+      kubernetes.core.k8s:
+        state: restarted
+        api_version: apps/v1
+        kind: Deployment
+        namespace: ingress-nginx
+        name: ingress-nginx-controller
+
+    - name: restart application services
+      kubernetes.core.k8s:
+        state: restarted
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ namespace }}"
+        name: "{{ item }}"
+      loop:
+        - codesign-api
+        - celery-worker
+        - celery-scheduler
+
+---
+# Security Hardening Playbook
+- name: Security Hardening
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    security_baseline: cis-kubernetes
+    compliance_frameworks:
+      - GDPR
+      - CCPA
+      - PDPA
+      - SOC2
+      - NIST
+
+  tasks:
+    - name: Apply Pod Security Standards
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ namespace }}"
+            labels:
+              pod-security.kubernetes.io/enforce: restricted
+              pod-security.kubernetes.io/audit: restricted
+              pod-security.kubernetes.io/warn: restricted
+
+    - name: Deploy network security policies
+      kubernetes.core.k8s:
+        state: present
+        src: "../kubernetes/network-policies.yaml"
+
+    - name: Configure RBAC with least privilege
+      kubernetes.core.k8s:
+        state: present
+        src: "../kubernetes/namespace-and-rbac.yaml"
+
+    - name: Deploy security scanning tools
+      ansible.builtin.include_tasks: tasks/security-tools.yml
+
+    - name: Configure secrets encryption at rest
+      ansible.builtin.include_tasks: tasks/secrets-encryption.yml
+
+    - name: Setup audit logging
+      ansible.builtin.include_tasks: tasks/audit-logging.yml
+
+    - name: Deploy compliance monitoring
+      ansible.builtin.include_tasks: tasks/compliance-monitoring.yml
+
+---
+# Performance Optimization Playbook
+- name: Performance Optimization
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    enable_performance_profiling: true
+    enable_resource_optimization: true
+    enable_auto_tuning: true
+
+  tasks:
+    - name: Configure resource quotas and limits
+      kubernetes.core.k8s:
+        state: present
+        src: "../kubernetes/autoscaling-and-policies.yaml"
+
+    - name: Deploy performance monitoring
+      ansible.builtin.include_tasks: tasks/performance-monitoring.yml
+
+    - name: Configure auto-scaling policies
+      ansible.builtin.include_tasks: tasks/auto-scaling.yml
+
+    - name: Optimize database performance
+      ansible.builtin.include_tasks: tasks/database-optimization.yml
+
+    - name: Configure caching strategies
+      ansible.builtin.include_tasks: tasks/cache-optimization.yml
+
+    - name: Setup load testing infrastructure
+      ansible.builtin.include_tasks: tasks/load-testing.yml
+      when: enable_load_testing | default(false)
+
+---
+# Disaster Recovery Setup
+- name: Disaster Recovery Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    dr_enabled: true
+    rto_minutes: 60  # Recovery Time Objective
+    rpo_minutes: 15  # Recovery Point Objective
+    backup_regions:
+      - us-west-2
+      - eu-west-1
+
+  tasks:
+    - name: Configure cross-region backup
+      ansible.builtin.include_tasks: tasks/cross-region-backup.yml
+      when: dr_enabled
+
+    - name: Setup automated failover
+      ansible.builtin.include_tasks: tasks/automated-failover.yml
+      when: dr_enabled
+
+    - name: Configure data replication
+      ansible.builtin.include_tasks: tasks/data-replication.yml
+      when: dr_enabled
+
+    - name: Create disaster recovery runbooks
+      ansible.builtin.include_tasks: tasks/dr-runbooks.yml
+
+    - name: Schedule DR testing
+      ansible.builtin.include_tasks: tasks/dr-testing.yml

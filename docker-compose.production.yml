@@ -1,11 +1,14 @@
 version: '3.8'
 
 services:
-  # Main application service
+  # Main application service with enhanced robustness
   codesign-api:
     build:
       context: .
       dockerfile: docker/production.dockerfile
+      args:
+        - BUILD_VERSION=${BUILD_VERSION:-latest}
+        - BUILD_COMMIT=${BUILD_COMMIT:-unknown}
     container_name: codesign-api-prod
     ports:
       - "8000:8000"
@@ -17,22 +20,40 @@ services:
       - SCALING_MODE=balanced
       - CACHE_SIZE_MB=256
       - REDIS_URL=redis://redis:6379
-      - POSTGRES_URL=postgresql://codesign:codesign123@postgres:5432/codesign_db
+      - POSTGRES_URL=postgresql://codesign:${POSTGRES_PASSWORD}@postgres:5432/codesign_db
+      - SECRET_KEY=${SECRET_KEY}
+      - COMPLIANCE_REGION=${COMPLIANCE_REGION:-global}
+      - SECURITY_AUDIT_ENABLED=true
+      - CIRCUIT_BREAKER_ENABLED=true
+      - HEALTH_CHECK_ENABLED=true
+      - DISTRIBUTED_TRACING_ENABLED=true
+      - RATE_LIMITING_ENABLED=true
+      - MAX_REQUEST_SIZE=100MB
+      - SESSION_TIMEOUT=3600
+      - BACKUP_ENABLED=true
+      - BACKUP_INTERVAL=3600
+      - METRICS_COLLECTION_ENABLED=true
+      - PERFORMANCE_MONITORING_ENABLED=true
     volumes:
       - ./data:/app/data:ro
       - ./logs:/app/logs
+      - ./backups:/app/backups
+      - ./compliance:/app/compliance
+      - compliance_db:/app/compliance_db
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - codesign-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health/detailed', timeout=5)"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -41,47 +62,132 @@ services:
         reservations:
           cpus: '1.0'
           memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 20000
+        hard: 40000
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-  # Redis for caching and session management
+  # Redis for caching and session management with enhanced configuration
   redis:
     image: redis:7-alpine
     container_name: codesign-redis-prod
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"  # Bind to localhost only
     volumes:
       - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     networks:
       - codesign-network
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: |
+      redis-server /usr/local/etc/redis/redis.conf
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --requirepass ${REDIS_PASSWORD}
+      --tcp-keepalive 300
+      --timeout 0
+      --tcp-backlog 511
+      --databases 16
+      --stop-writes-on-bgsave-error yes
+      --rdbcompression yes
+      --rdbchecksum yes
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
-      timeout: 3s
-      retries: 3
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 768M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
 
-  # PostgreSQL for persistent data
+  # PostgreSQL for persistent data with enhanced security and performance
   postgres:
     image: postgres:15-alpine
     container_name: codesign-postgres-prod
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"  # Bind to localhost only
     environment:
       - POSTGRES_DB=codesign_db
       - POSTGRES_USER=codesign
-      - POSTGRES_PASSWORD=codesign123
-      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C --auth-local=trust --auth-host=md5
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_SHARED_PRELOAD_LIBRARIES=pg_stat_statements
+      - POSTGRES_MAX_CONNECTIONS=200
+      - POSTGRES_SHARED_BUFFERS=256MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=1GB
+      - POSTGRES_MAINTENANCE_WORK_MEM=64MB
+      - POSTGRES_CHECKPOINT_COMPLETION_TARGET=0.9
+      - POSTGRES_WAL_BUFFERS=16MB
+      - POSTGRES_DEFAULT_STATISTICS_TARGET=100
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./scripts/init-compliance.sql:/docker-entrypoint-initdb.d/02-compliance.sql:ro
+      - ./scripts/init-monitoring.sql:/docker-entrypoint-initdb.d/03-monitoring.sql:ro
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - postgres_backups:/var/lib/postgresql/backups
     networks:
       - codesign-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codesign -d codesign_db"]
+      test: ["CMD-SHELL", "pg_isready -U codesign -d codesign_db -h localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1.5G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   # Nginx reverse proxy for production
   nginx:
@@ -145,27 +251,59 @@ services:
       - codesign-network
     restart: unless-stopped
 
-  # Celery workers for background tasks
+  # Celery workers for background tasks with enhanced robustness
   celery-worker:
     build:
       context: .
       dockerfile: docker/production.dockerfile
+      args:
+        - BUILD_VERSION=${BUILD_VERSION:-latest}
     container_name: codesign-celery-prod
-    command: celery -A codesign_playground.worker worker --loglevel=info --concurrency=4
+    command: |
+      celery -A codesign_playground.worker worker
+      --loglevel=info
+      --concurrency=4
+      --max-tasks-per-child=1000
+      --max-memory-per-child=1048576
+      --pool=prefork
+      --without-heartbeat
+      --without-mingle
+      --without-gossip
+      --optimization=fair
+      --prefetch-multiplier=1
     environment:
       - ENV=production
       - PYTHONPATH=/app/backend
-      - REDIS_URL=redis://redis:6379
-      - POSTGRES_URL=postgresql://codesign:codesign123@postgres:5432/codesign_db
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - POSTGRES_URL=postgresql://codesign:${POSTGRES_PASSWORD}@postgres:5432/codesign_db
+      - CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=true
+      - CELERY_BROKER_CONNECTION_MAX_RETRIES=10
+      - CELERY_TASK_ALWAYS_EAGER=false
+      - CELERY_TASK_ACKS_LATE=true
+      - CELERY_WORKER_PREFETCH_MULTIPLIER=1
+      - CELERY_TASK_REJECT_ON_WORKER_LOST=true
+      - CELERY_RESULT_BACKEND_ALWAYS_RETRY=true
+      - CIRCUIT_BREAKER_ENABLED=true
+      - HEALTH_CHECK_ENABLED=true
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./compliance:/app/compliance
+      - compliance_db:/app/compliance_db
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - codesign-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "-A", "codesign_playground.worker", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         limits:
@@ -174,17 +312,133 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 networks:
   codesign-network:
     driver: bridge
 
+  # Security scanner for vulnerability assessment
+  security-scanner:
+    image: aquasec/trivy:latest
+    container_name: codesign-security-scanner
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./security-reports:/reports
+    networks:
+      - codesign-network
+    restart: "no"
+    profiles:
+      - security
+    command: |
+      sh -c '
+        trivy image --format json --output /reports/codesign-api-scan.json codesign-api-prod
+        trivy image --format json --output /reports/redis-scan.json redis:7-alpine
+        trivy image --format json --output /reports/postgres-scan.json postgres:15-alpine
+      '
+
+  # Backup service for data protection
+  backup-service:
+    build:
+      context: .
+      dockerfile: docker/backup.dockerfile
+    container_name: codesign-backup-service
+    environment:
+      - POSTGRES_URL=postgresql://codesign:${POSTGRES_PASSWORD}@postgres:5432/codesign_db
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - BACKUP_SCHEDULE=0 2 * * *  # Daily at 2 AM
+      - BACKUP_RETENTION_DAYS=30
+      - S3_BACKUP_ENABLED=${S3_BACKUP_ENABLED:-false}
+      - S3_BUCKET=${S3_BACKUP_BUCKET}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    volumes:
+      - postgres_backups:/backups/postgres
+      - redis_data:/data/redis:ro
+      - ./backups:/backups/local
+      - compliance_db:/data/compliance:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - codesign-network
+    restart: unless-stopped
+    profiles:
+      - backup
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # Log aggregation service
+  log-aggregator:
+    image: fluent/fluent-bit:latest
+    container_name: codesign-log-aggregator
+    volumes:
+      - ./logs:/fluent-bit/logs:ro
+      - ./fluentbit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./fluentbit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+    networks:
+      - codesign-network
+    restart: unless-stopped
+    profiles:
+      - logging
+    depends_on:
+      - codesign-api
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
 volumes:
   redis_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/redis
   postgres_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/postgres
+  postgres_backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${BACKUP_PATH}/postgres
   prometheus_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/prometheus
   grafana_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/grafana
+  compliance_db:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH}/compliance

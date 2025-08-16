@@ -5,15 +5,23 @@ This module provides optimization algorithms for jointly optimizing neural netwo
 and their corresponding hardware accelerators.
 """
 
-from typing import Dict, List, Any, Optional, Tuple, Union
+from typing import Dict, List, Any, Optional, Tuple, Union, Callable
 from dataclasses import dataclass
 import random
 import math
+import time
+import threading
+from contextlib import contextmanager
+
 from .accelerator import Accelerator, ModelProfile
 from ..utils.monitoring import record_metric, monitor_function
 from ..utils.validation import validate_inputs, validate_model, SecurityValidator
 from ..utils.exceptions import OptimizationError, ValidationError
-import logging
+from ..utils.circuit_breaker import CircuitBreaker, circuit_breaker
+from ..utils.enhanced_resilience import resilient_operation, RetryConfig
+from ..utils.health_monitoring import HealthMonitor
+from ..utils.logging import get_logger
+from ..utils.compliance import record_processing, DataCategory
 
 
 @dataclass
@@ -39,28 +47,71 @@ class OptimizationResult:
 
 
 class ModelOptimizer:
-    """Co-optimization of neural networks and hardware accelerators."""
+    """Co-optimization of neural networks and hardware accelerators with enhanced robustness."""
     
-    def __init__(self, model: Any, accelerator: Accelerator):
+    def __init__(self, model: Any, accelerator: Accelerator, user_id: Optional[str] = None):
         """
         Initialize the model-hardware co-optimizer.
         
         Args:
             model: Neural network model to optimize
             accelerator: Hardware accelerator to co-optimize
+            user_id: User identifier for compliance tracking
         """
         self.model = model
         self.accelerator = accelerator
+        self.user_id = user_id
         self.optimization_history = []
+        
+        # Robustness components
+        self.logger = get_logger(__name__)
+        self.health_monitor = HealthMonitor("model_optimizer")
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=5,
+            recovery_timeout=30,
+            expected_exception=OptimizationError
+        )
+        self._optimization_lock = threading.RLock()
+        self._metrics_cache = {}
+        self._cache_ttl = 300  # 5 minutes
+        
+        # Security validation
+        self.security_validator = SecurityValidator()
+        
+        # Performance tracking
+        self.optimization_stats = {
+            "total_optimizations": 0,
+            "successful_optimizations": 0,
+            "failed_optimizations": 0,
+            "average_optimization_time": 0.0,
+            "cache_hits": 0,
+            "cache_misses": 0
+        }
+        
+        # Record data processing for compliance
+        if self.user_id:
+            record_processing(
+                user_id=self.user_id,
+                data_category=DataCategory.MODEL_ARTIFACTS,
+                purpose="model_optimization",
+                legal_basis="legitimate_interests"
+            )
+        
+        self.health_monitor.update_status("healthy", {"component": "initialized"})
+        self.logger.info(f"ModelOptimizer initialized for user {user_id}")
         
     @monitor_function("model_co_optimization")
     @validate_inputs
+    @circuit_breaker
+    @resilient_operation(RetryConfig(max_attempts=3, base_delay=1.0))
     def co_optimize(
         self,
         target_fps: float,
         power_budget: float,
         iterations: int = 10,
-        optimization_strategy: str = "balanced"
+        optimization_strategy: str = "balanced",
+        enable_caching: bool = True,
+        timeout_seconds: int = 300
     ) -> OptimizationResult:
         """
         Jointly optimize model and hardware for target metrics.
@@ -74,92 +125,316 @@ class ModelOptimizer:
         Returns:
             OptimizationResult with optimized model and accelerator
         """
-        # Input validation
-        if target_fps <= 0:
-            raise ValueError("target_fps must be positive")
-        if power_budget <= 0:
-            raise ValueError("power_budget must be positive")
-        if iterations <= 0:
-            raise ValueError("iterations must be positive")
-        if optimization_strategy not in ["performance", "power", "balanced"]:
-            raise ValueError("optimization_strategy must be one of: performance, power, balanced")
+        # Comprehensive input validation with security checks
+        self._validate_optimization_inputs(target_fps, power_budget, iterations, optimization_strategy, timeout_seconds)
         
-        # Security validation
-        security_validator = SecurityValidator()
-        if not security_validator.validate_numeric_input(target_fps, "target_fps", min_value=0.1, max_value=1000):
-            raise ValueError("Invalid target_fps value")
-        if not security_validator.validate_numeric_input(power_budget, "power_budget", min_value=0.1, max_value=100):
-            raise ValueError("Invalid power_budget value")
+        # Check cache first
+        cache_key = self._generate_cache_key(target_fps, power_budget, iterations, optimization_strategy)
+        if enable_caching:
+            cached_result = self._get_cached_result(cache_key)
+            if cached_result:
+                self.optimization_stats["cache_hits"] += 1
+                self.logger.info(f"Returning cached optimization result for key {cache_key}")
+                return cached_result
+            else:
+                self.optimization_stats["cache_misses"] += 1
+        
+        # Record optimization start with comprehensive tracking
+        self.optimization_stats["total_optimizations"] += 1
+        optimization_id = f"opt_{int(time.time())}_{random.randint(1000, 9999)}"
         
         try:
-            record_metric("co_optimization_started", 1, "counter", {"strategy": optimization_strategy})
+            record_metric("co_optimization_started", 1, "counter", {
+                "strategy": optimization_strategy,
+                "optimization_id": optimization_id,
+                "user_id": self.user_id or "anonymous"
+            })
         except Exception as e:
-            logging.warning(f"Failed to record metric: {e}")
+            self.logger.warning(f"Failed to record start metric: {e}")
         
-        import time
+        # Thread-safe optimization with timeout
+        with self._optimization_lock:
+            start_time = time.time()
+            
+            convergence_history = []
+            best_design = None
+            best_score = float('-inf')
+            
+            # Health check before starting
+            if not self.health_monitor.is_healthy():
+                raise OptimizationError("System health check failed before optimization")
+        
+            try:
+                # Optimization loop with timeout and health monitoring
+                for iteration in range(iterations):
+                    # Check timeout
+                    if time.time() - start_time > timeout_seconds:
+                        self.logger.warning(f"Optimization timeout after {timeout_seconds}s")
+                        break
+                    
+                    # Health check during optimization
+                    if iteration % 5 == 0:  # Check every 5 iterations
+                        if not self.health_monitor.is_healthy():
+                            self.logger.warning("Health check failed during optimization")
+                            break
+                    
+                    try:
+                        iteration_start = time.time()
+                        
+                        # Model optimization step with resilience
+                        current_model = self._optimize_model_step_resilient(target_fps, power_budget, iteration)
+                        
+                        # Hardware optimization step with resilience
+                        current_accelerator = self._optimize_hardware_step_resilient(target_fps, power_budget, iteration)
+                        
+                        # Evaluate combined design with error handling
+                        metrics = self._evaluate_design_resilient(current_model, current_accelerator)
+                        score = self._compute_objective_score(metrics, optimization_strategy)
+                        
+                        iteration_time = time.time() - iteration_start
+                        
+                        convergence_history.append({
+                            "iteration": iteration,
+                            "score": score,
+                            "fps": metrics["fps"],
+                            "power": metrics["power"],
+                            "accuracy": metrics["accuracy"],
+                            "iteration_time": iteration_time,
+                            "timestamp": time.time()
+                        })
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_design = (current_model, current_accelerator, metrics)
+                            self.logger.debug(f"New best design found at iteration {iteration}: score={score:.4f}")
+                        
+                        # Update health status
+                        self.health_monitor.update_status("healthy", {
+                            "current_iteration": iteration,
+                            "best_score": best_score,
+                            "iteration_time": iteration_time
+                        })
+                        
+                    except Exception as e:
+                        self.logger.error(f"Optimization iteration {iteration} failed: {e}")
+                        self.health_monitor.update_status("degraded", {
+                            "failed_iteration": iteration,
+                            "error": str(e)
+                        })
+                        
+                        # Record iteration failure but continue
+                        try:
+                            record_metric("optimization_iteration_failure", 1, "counter", {
+                                "iteration": iteration,
+                                "optimization_id": optimization_id
+                            })
+                        except:
+                            pass
+                        
+                        # Continue with next iteration instead of failing completely
+                        continue
+                        
+            except Exception as e:
+                self.logger.error(f"Critical optimization failure: {e}")
+                self.health_monitor.update_status("unhealthy", {"critical_error": str(e)})
+                self.optimization_stats["failed_optimizations"] += 1
+                raise OptimizationError(f"Co-optimization failed: {e}")
+        
+            optimization_time = time.time() - start_time
+            
+            # Validate results
+            if best_design is None:
+                self.optimization_stats["failed_optimizations"] += 1
+                self.health_monitor.update_status("unhealthy", {"no_valid_design": True})
+                raise OptimizationError("No valid design found during optimization")
+            
+            best_model, best_accelerator, best_metrics = best_design
+            
+            # Create optimization result
+            result = OptimizationResult(
+                optimized_model=best_model,
+                optimized_accelerator=best_accelerator,
+                metrics=best_metrics,
+                iterations=len(convergence_history),  # Actual iterations completed
+                convergence_history=convergence_history,
+                optimization_time=optimization_time,
+            )
+            
+            # Cache successful result
+            if enable_caching:
+                self._cache_result(cache_key, result)
+            
+            # Update statistics
+            self.optimization_stats["successful_optimizations"] += 1
+            self.optimization_stats["average_optimization_time"] = (
+                (self.optimization_stats["average_optimization_time"] * 
+                 (self.optimization_stats["successful_optimizations"] - 1) + optimization_time) /
+                self.optimization_stats["successful_optimizations"]
+            )
+            
+            # Record comprehensive completion metrics
+            try:
+                record_metric("co_optimization_completed", 1, "counter", {
+                    "strategy": optimization_strategy,
+                    "optimization_id": optimization_id,
+                    "success": True
+                })
+                record_metric("co_optimization_time", optimization_time, "timer")
+                record_metric("co_optimization_best_score", best_score, "gauge")
+                record_metric("co_optimization_iterations_completed", len(convergence_history), "gauge")
+            except Exception as e:
+                self.logger.warning(f"Failed to record completion metrics: {e}")
+            
+            # Final health status update
+            self.health_monitor.update_status("healthy", {
+                "optimization_completed": True,
+                "final_score": best_score,
+                "total_time": optimization_time
+            })
+            
+            self.logger.info(
+                f"Optimization completed successfully",
+                extra={
+                    "optimization_id": optimization_id,
+                    "strategy": optimization_strategy,
+                    "final_score": best_score,
+                    "optimization_time": optimization_time,
+                    "iterations_completed": len(convergence_history),
+                    "user_id": self.user_id
+                }
+            )
+            
+            return result
+    
+    def _validate_optimization_inputs(self, target_fps: float, power_budget: float, 
+                                    iterations: int, strategy: str, timeout: int) -> None:
+        """Comprehensive input validation with security checks."""
+        # Basic type and value validation
+        if not isinstance(target_fps, (int, float)) or target_fps <= 0:
+            raise ValidationError("target_fps must be a positive number")
+        if not isinstance(power_budget, (int, float)) or power_budget <= 0:
+            raise ValidationError("power_budget must be a positive number")
+        if not isinstance(iterations, int) or iterations <= 0:
+            raise ValidationError("iterations must be a positive integer")
+        if strategy not in ["performance", "power", "balanced"]:
+            raise ValidationError("optimization_strategy must be one of: performance, power, balanced")
+        if not isinstance(timeout, int) or timeout <= 0:
+            raise ValidationError("timeout_seconds must be a positive integer")
+        
+        # Security validation with strict bounds
+        if not self.security_validator.validate_numeric_input(target_fps, "target_fps", min_value=0.1, max_value=1000):
+            raise SecurityError("target_fps outside safe bounds")
+        if not self.security_validator.validate_numeric_input(power_budget, "power_budget", min_value=0.1, max_value=100):
+            raise SecurityError("power_budget outside safe bounds")
+        if iterations > 1000:
+            raise SecurityError("iterations count too high")
+        if timeout > 3600:  # 1 hour max
+            raise SecurityError("timeout too high")
+    
+    def _generate_cache_key(self, target_fps: float, power_budget: float, 
+                          iterations: int, strategy: str) -> str:
+        """Generate cache key for optimization parameters."""
+        import hashlib
+        params = f"{target_fps}_{power_budget}_{iterations}_{strategy}_{hash(str(self.model))}_{hash(str(self.accelerator))}"
+        return hashlib.md5(params.encode()).hexdigest()
+    
+    def _get_cached_result(self, cache_key: str) -> Optional[OptimizationResult]:
+        """Get cached optimization result if valid."""
+        if cache_key not in self._metrics_cache:
+            return None
+        
+        cached_entry = self._metrics_cache[cache_key]
+        current_time = time.time()
+        
+        # Check if cache entry is still valid
+        if current_time - cached_entry["timestamp"] > self._cache_ttl:
+            del self._metrics_cache[cache_key]
+            return None
+        
+        return cached_entry["result"]
+    
+    def _cache_result(self, cache_key: str, result: OptimizationResult) -> None:
+        """Cache optimization result."""
+        self._metrics_cache[cache_key] = {
+            "result": result,
+            "timestamp": time.time()
+        }
+        
+        # Limit cache size
+        if len(self._metrics_cache) > 100:
+            # Remove oldest entries
+            oldest_key = min(self._metrics_cache.keys(), 
+                           key=lambda k: self._metrics_cache[k]["timestamp"])
+            del self._metrics_cache[oldest_key]
+    
+    def _optimize_model_step_resilient(self, target_fps: float, power_budget: float, iteration: int) -> Any:
+        """Model optimization step with enhanced error handling."""
+        try:
+            return self._optimize_model_step(target_fps, power_budget)
+        except Exception as e:
+            self.logger.warning(f"Model optimization step {iteration} failed: {e}")
+            # Return current model as fallback
+            return self.model
+    
+    def _optimize_hardware_step_resilient(self, target_fps: float, power_budget: float, iteration: int) -> Accelerator:
+        """Hardware optimization step with enhanced error handling."""
+        try:
+            return self._optimize_hardware_step(target_fps, power_budget)
+        except Exception as e:
+            self.logger.warning(f"Hardware optimization step {iteration} failed: {e}")
+            # Return current accelerator as fallback
+            return self.accelerator
+    
+    def _evaluate_design_resilient(self, model: Any, accelerator: Accelerator) -> Dict[str, float]:
+        """Design evaluation with enhanced error handling."""
+        try:
+            return self._evaluate_design(model, accelerator)
+        except Exception as e:
+            self.logger.warning(f"Design evaluation failed: {e}")
+            # Return conservative default metrics
+            return {
+                "fps": 1.0,
+                "power": 10.0,
+                "accuracy": 0.5,
+                "latency_ms": 1000.0,
+                "efficiency": 0.1,
+                "area_mm2": 50.0,
+            }
+    
+    def get_optimization_stats(self) -> Dict[str, Any]:
+        """Get comprehensive optimization statistics."""
+        return {
+            **self.optimization_stats,
+            "cache_size": len(self._metrics_cache),
+            "health_status": self.health_monitor.get_status(),
+            "circuit_breaker_status": {
+                "state": self.circuit_breaker._state.name,
+                "failure_count": self.circuit_breaker._failure_count,
+                "last_failure_time": self.circuit_breaker._last_failure_time
+            }
+        }
+    
+    def clear_cache(self) -> None:
+        """Clear optimization cache."""
+        self._metrics_cache.clear()
+        self.optimization_stats["cache_hits"] = 0
+        self.optimization_stats["cache_misses"] = 0
+        self.logger.info("Optimization cache cleared")
+    
+    @contextmanager
+    def optimization_context(self, context_name: str):
+        """Context manager for optimization operations."""
+        self.logger.debug(f"Entering optimization context: {context_name}")
         start_time = time.time()
         
-        convergence_history = []
-        best_design = None
-        best_score = float('-inf')
-        
         try:
-            for iteration in range(iterations):
-                try:
-                    # Model optimization step
-                    current_model = self._optimize_model_step(target_fps, power_budget)
-                    
-                    # Hardware optimization step  
-                    current_accelerator = self._optimize_hardware_step(target_fps, power_budget)
-                    
-                    # Evaluate combined design
-                    metrics = self._evaluate_design(current_model, current_accelerator)
-                    score = self._compute_objective_score(metrics, optimization_strategy)
-                    
-                    convergence_history.append({
-                        "iteration": iteration,
-                        "score": score,
-                        "fps": metrics["fps"],
-                        "power": metrics["power"],
-                        "accuracy": metrics["accuracy"],
-                    })
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_design = (current_model, current_accelerator, metrics)
-                        
-                except Exception as e:
-                    logging.error(f"Optimization iteration {iteration} failed: {e}")
-                    # Continue with next iteration instead of failing completely
-                    continue
+            yield
         except Exception as e:
-            logging.error(f"Critical optimization failure: {e}")
-            raise OptimizationError(f"Co-optimization failed: {e}")
-        
-        optimization_time = time.time() - start_time
-        
-        if best_design is None:
-            raise OptimizationError("No valid design found during optimization")
-        
-        best_model, best_accelerator, best_metrics = best_design
-        
-        result = OptimizationResult(
-            optimized_model=best_model,
-            optimized_accelerator=best_accelerator,
-            metrics=best_metrics,
-            iterations=iterations,
-            convergence_history=convergence_history,
-            optimization_time=optimization_time,
-        )
-        
-        try:
-            record_metric("co_optimization_completed", 1, "counter", {"strategy": optimization_strategy})
-            record_metric("co_optimization_time", optimization_time, "timer")
-            record_metric("co_optimization_best_score", best_score, "gauge")
-        except Exception as e:
-            logging.warning(f"Failed to record completion metrics: {e}")
-        
-        return result
+            self.logger.error(f"Error in optimization context {context_name}: {e}")
+            raise
+        finally:
+            duration = time.time() - start_time
+            self.logger.debug(f"Exiting optimization context: {context_name} (duration: {duration:.2f}s)")
     
     def apply_hardware_constraints(self, model: Any, constraints: Dict[str, Any]) -> Any:
         """

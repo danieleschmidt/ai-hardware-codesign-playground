@@ -434,6 +434,14 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.requests = {}  # client_id -> list of timestamps
+        
+        # Import the new rate limiting system
+        try:
+            from .rate_limiting import get_rate_limit_manager, RateLimitScope
+            self._advanced_limiter = get_rate_limit_manager()
+            self._use_advanced = True
+        except ImportError:
+            self._use_advanced = False
     
     def is_allowed(self, client_id: str) -> bool:
         """
@@ -445,6 +453,16 @@ class RateLimiter:
         Returns:
             True if request is allowed
         """
+        # Use advanced rate limiter if available
+        if self._use_advanced:
+            try:
+                from .rate_limiting import RateLimitScope
+                allowed, _ = self._advanced_limiter.check_limits(client_id, RateLimitScope.IP)
+                return allowed
+            except:
+                pass  # Fall back to simple implementation
+        
+        # Simple rate limiting implementation
         import time
         
         now = time.time()

@@ -1,0 +1,190 @@
+---
+# High-performance SSD storage class for databases
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  labels:
+    performance: high
+    storage-tier: premium
+  annotations:
+    description: "High-performance SSD storage for databases"
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: kubernetes.io/gce-pd  # Change to your cloud provider
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+  zones: us-central1-a,us-central1-b,us-central1-c
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+# Encrypted SSD storage class for sensitive data
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: encrypted-ssd
+  labels:
+    performance: high
+    storage-tier: premium
+    security: encrypted
+  annotations:
+    description: "Encrypted SSD storage for compliance and sensitive data"
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd
+  encrypted: "true"
+  encryption-key: projects/PROJECT_ID/locations/LOCATION/keyRings/RING_ID/cryptoKeys/KEY_ID
+  replication-type: regional-pd
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+# Standard storage class for backups
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: backup-storage
+  labels:
+    performance: standard
+    storage-tier: standard
+    backup: "true"
+  annotations:
+    description: "Standard storage for backups and archival data"
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-standard
+  replication-type: regional-pd
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+# High-IOPS storage for cache and temporary data
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: high-iops-ssd
+  labels:
+    performance: ultra-high
+    storage-tier: premium-plus
+  annotations:
+    description: "Ultra-high IOPS SSD for cache and high-performance workloads"
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd
+  provisioned-iops-on-create: "10000"
+  replication-type: regional-pd
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+
+---
+# Regional persistent disk for multi-zone availability
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: regional-ssd
+  labels:
+    performance: high
+    availability: multi-zone
+  annotations:
+    description: "Regional SSD for multi-zone high availability"
+provisioner: kubernetes.io/gce-pd
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+  zones: us-central1-a,us-central1-b,us-central1-c
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+# NFS storage class for shared data
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: shared-nfs
+  labels:
+    access-mode: read-write-many
+    storage-tier: shared
+  annotations:
+    description: "Shared NFS storage for multi-pod access"
+provisioner: example.com/nfs  # Replace with your NFS provisioner
+parameters:
+  server: nfs-server.example.com
+  path: /shared/codesign
+  archiveOnDelete: "false"
+allowVolumeExpansion: true
+volumeBindingMode: Immediate
+reclaimPolicy: Retain
+
+---
+# For AWS environments
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-gp3-ssd
+  labels:
+    cloud-provider: aws
+    performance: high
+  annotations:
+    description: "AWS GP3 SSD storage class"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  encrypted: "true"
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+# For Azure environments
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-premium-ssd
+  labels:
+    cloud-provider: azure
+    performance: high
+  annotations:
+    description: "Azure Premium SSD storage class"
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: Premium_LRS
+  kind: Managed
+  cachingmode: ReadOnly
+  diskEncryptionSetID: /subscriptions/SUBSCRIPTION_ID/resourceGroups/RG_NAME/providers/Microsoft.Compute/diskEncryptionSets/DES_NAME
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+
+---
+# For multi-cloud or hybrid environments
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ceph-rbd-ssd
+  labels:
+    storage-backend: ceph
+    performance: high
+  annotations:
+    description: "Ceph RBD SSD storage for hybrid/multi-cloud"
+provisioner: rbd.csi.ceph.com
+parameters:
+  clusterID: cluster-id
+  pool: kubernetes
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: csi-rbd-secret
+  csi.storage.k8s.io/provisioner-secret-namespace: codesign-production
+  csi.storage.k8s.io/controller-expand-secret-name: csi-rbd-secret
+  csi.storage.k8s.io/controller-expand-secret-namespace: codesign-production
+  csi.storage.k8s.io/node-stage-secret-name: csi-rbd-secret
+  csi.storage.k8s.io/node-stage-secret-namespace: codesign-production
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain

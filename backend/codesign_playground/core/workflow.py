@@ -18,8 +18,10 @@ from .explorer import DesignSpaceExplorer, DesignSpaceResult
 from ..utils.monitoring import record_metric, monitor_function, get_health_status
 from ..utils.validation import validate_inputs, SecurityValidator
 from ..utils.exceptions import WorkflowError, ValidationError
+from ..utils.model_conversion import ModelConverter, convert_model_format, optimize_for_hardware
 # from ..utils.logging import get_logger  # Use standard logging for now
 import logging
+import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,7 @@ class Workflow:
         # Initialize components
         self.designer = AcceleratorDesigner()
         self.explorer = DesignSpaceExplorer()
+        self.model_converter = ModelConverter()
         
         # State management
         self.state = WorkflowState()
@@ -127,6 +130,11 @@ class Workflow:
         self.model_profile = None
         self.accelerator = None
         self.optimizer = None
+        
+        # Checkpoint management
+        self.checkpoint_enabled = True
+        self.checkpoint_interval = 60  # seconds
+        self.last_checkpoint_time = time.time()
         
         self.state.add_message(f"Initialized workflow '{name}'")
     
@@ -172,19 +180,12 @@ class Workflow:
             raise WorkflowError(f"Model import validation failed: {e}")
         
         try:
-            # Mock model import - in practice would load actual model
+            # Load actual model using model converter capabilities
             if framework == "auto":
                 framework = self._detect_framework(model_path)
             
-            # Create mock model object
-            class MockModel:
-                def __init__(self, path, shapes, framework):
-                    self.path = path
-                    self.input_shapes = shapes
-                    self.framework = framework
-                    self.complexity = 1.0
-            
-            self.model = MockModel(model_path, input_shapes, framework)
+            # Load the model based on framework
+            self.model = self._load_model(model_path, framework)
             
             # Profile the model
             self.state.update_progress(WorkflowStage.MODEL_IMPORT, 0.5)
@@ -192,7 +193,10 @@ class Workflow:
             
             # Use first input shape for profiling
             primary_input_shape = list(input_shapes.values())[0]
-            self.model_profile = self.designer.profile_model(self.model, primary_input_shape)
+            self.model_profile = self.designer.profile_model(self.model, primary_input_shape, framework)
+            
+            # Create checkpoint after successful import
+            self._create_checkpoint_if_needed()
             
         except Exception as e:
             self.state.set_stage(WorkflowStage.FAILED)
@@ -477,6 +481,196 @@ class Workflow:
         else:
             return "onnx"  # Default fallback
     
+    def _load_model(self, model_path: str, framework: str) -> Any:
+        """Load a model from file path."""
+        try:
+            if framework == "pytorch":
+                import torch
+                model = torch.load(model_path, map_location='cpu')
+                if hasattr(model, 'eval'):
+                    model.eval()
+                return model
+            elif framework == "tensorflow":
+                import tensorflow as tf
+                return tf.keras.models.load_model(model_path)
+            elif framework == "onnx":
+                import onnx
+                return onnx.load(model_path)
+            else:
+                # Create a mock model object with path information
+                class ModelProxy:
+                    def __init__(self, path, framework):
+                        self.path = path
+                        self.framework = framework
+                        self.complexity = 1.0
+                return ModelProxy(model_path, framework)
+        except Exception as e:
+            logger.warning(f"Failed to load model {model_path}: {e}")
+            # Return mock model as fallback
+            class ModelProxy:
+                def __init__(self, path, framework):
+                    self.path = path
+                    self.framework = framework
+                    self.complexity = 1.0
+            return ModelProxy(model_path, framework)
+    
+    def _create_checkpoint_if_needed(self) -> None:
+        """Create checkpoint if enough time has passed."""
+        current_time = time.time()
+        if (self.checkpoint_enabled and 
+            current_time - self.last_checkpoint_time > self.checkpoint_interval):
+            self.create_checkpoint()
+            self.last_checkpoint_time = current_time
+    
+    def create_checkpoint(self, checkpoint_name: Optional[str] = None) -> str:
+        """
+        Create a checkpoint of the current workflow state.
+        
+        Args:
+            checkpoint_name: Optional name for the checkpoint
+            
+        Returns:
+            Path to the checkpoint file
+        """
+        if checkpoint_name is None:
+            timestamp = int(time.time())
+            checkpoint_name = f"checkpoint_{timestamp}"
+        
+        checkpoint_dir = self.output_dir / "checkpoints"
+        checkpoint_dir.mkdir(exist_ok=True)
+        checkpoint_file = checkpoint_dir / f"{checkpoint_name}.pkl"
+        
+        # Create checkpoint data
+        checkpoint_data = {
+            "name": self.name,
+            "state": self.state.to_dict(),
+            "model_profile": self.model_profile.to_dict() if self.model_profile else None,
+            "accelerator": self.accelerator.to_dict() if self.accelerator else None,
+            "timestamp": time.time(),
+            "stage": self.state.stage.value,
+        }
+        
+        # Save checkpoint
+        try:
+            with open(checkpoint_file, 'wb') as f:
+                pickle.dump(checkpoint_data, f)
+            
+            self.state.artifacts[f"checkpoint_{checkpoint_name}"] = str(checkpoint_file)
+            self.state.add_message(f"Created checkpoint: {checkpoint_name}")
+            logger.info(f"Checkpoint created: {checkpoint_file}")
+            
+            return str(checkpoint_file)
+        except Exception as e:
+            logger.error(f"Failed to create checkpoint: {e}")
+            raise WorkflowError(f"Checkpoint creation failed: {e}")
+    
+    def restore_from_checkpoint(self, checkpoint_path: str) -> None:
+        """
+        Restore workflow state from a checkpoint.
+        
+        Args:
+            checkpoint_path: Path to the checkpoint file
+        """
+        try:
+            with open(checkpoint_path, 'rb') as f:
+                checkpoint_data = pickle.load(f)
+            
+            # Restore state
+            state_data = checkpoint_data["state"]
+            self.state.stage = WorkflowStage(state_data["stage"])
+            self.state.progress = state_data["progress"]
+            self.state.messages = state_data["messages"]
+            self.state.artifacts = state_data["artifacts"]
+            
+            # Restore model profile
+            if checkpoint_data["model_profile"]:
+                profile_data = checkpoint_data["model_profile"]
+                self.model_profile = ModelProfile(**profile_data)
+            
+            # Restore accelerator
+            if checkpoint_data["accelerator"]:
+                accel_data = checkpoint_data["accelerator"]
+                self.accelerator = Accelerator(**accel_data)
+            
+            self.state.add_message(f"Restored from checkpoint: {Path(checkpoint_path).name}")
+            logger.info(f"Workflow restored from checkpoint: {checkpoint_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to restore from checkpoint: {e}")
+            raise WorkflowError(f"Checkpoint restoration failed: {e}")
+    
+    def list_checkpoints(self) -> List[Dict[str, Any]]:
+        """
+        List available checkpoints.
+        
+        Returns:
+            List of checkpoint information
+        """
+        checkpoint_dir = self.output_dir / "checkpoints"
+        if not checkpoint_dir.exists():
+            return []
+        
+        checkpoints = []
+        for checkpoint_file in checkpoint_dir.glob("*.pkl"):
+            try:
+                with open(checkpoint_file, 'rb') as f:
+                    checkpoint_data = pickle.load(f)
+                
+                checkpoints.append({
+                    "name": checkpoint_file.stem,
+                    "path": str(checkpoint_file),
+                    "timestamp": checkpoint_data["timestamp"],
+                    "stage": checkpoint_data["stage"],
+                    "size_mb": checkpoint_file.stat().st_size / (1024 * 1024)
+                })
+            except Exception as e:
+                logger.warning(f"Failed to read checkpoint {checkpoint_file}: {e}")
+        
+        # Sort by timestamp (newest first)
+        checkpoints.sort(key=lambda x: x["timestamp"], reverse=True)
+        return checkpoints
+    
+    def convert_model_format(
+        self, 
+        target_format: str, 
+        input_shape: Optional[Tuple[int, ...]] = None,
+        output_path: Optional[str] = None
+    ) -> str:
+        """
+        Convert the loaded model to a different format.
+        
+        Args:
+            target_format: Target format ("onnx", "tflite")
+            input_shape: Input shape for conversion
+            output_path: Output path for converted model
+            
+        Returns:
+            Path to converted model
+        """
+        if not self.model:
+            raise RuntimeError("No model loaded for conversion")
+        
+        if output_path is None:
+            model_name = getattr(self.model, 'path', self.name)
+            if isinstance(model_name, str):
+                model_name = Path(model_name).stem
+            output_path = str(self.output_dir / f"{model_name}_converted.{target_format}")
+        
+        if input_shape is None and self.model_profile:
+            # Try to infer from model profile or use a default
+            input_shape = (3, 224, 224)  # Common default for vision models
+        
+        try:
+            converted_path = convert_model_format(
+                self.model, output_path, target_format, input_shape
+            )
+            self.state.artifacts[f"converted_{target_format}"] = converted_path
+            self.state.add_message(f"Converted model to {target_format}: {converted_path}")
+            return converted_path
+        except Exception as e:
+            logger.error(f"Model conversion failed: {e}")
+            raise WorkflowError(f"Failed to convert model to {target_format}: {e}")
+
     def _generate_testbench(self, testbench_file: Path) -> None:
         """Generate SystemVerilog testbench."""
         testbench_code = f"""
