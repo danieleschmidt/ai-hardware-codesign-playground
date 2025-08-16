@@ -1,0 +1,198 @@
+---
+# Namespace for production deployment
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codesign-production
+  labels:
+    name: codesign-production
+    environment: production
+    app.kubernetes.io/name: codesign-playground
+    app.kubernetes.io/version: "2.0"
+    compliance.gdpr/enabled: "true"
+    compliance.ccpa/enabled: "true"
+    security.pod-security/enforce: "restricted"
+    security.pod-security/audit: "restricted"
+    security.pod-security/warn: "restricted"
+  annotations:
+    description: "Production namespace for AI Hardware Co-Design Playground"
+    owner: "platform-engineering@terragon-labs.com"
+    cost-center: "engineering"
+    data-classification: "confidential"
+
+---
+# Service Account for API service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codesign-api-sa
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+    component: backend
+  annotations:
+    description: "Service account for codesign API pods"
+automountServiceAccountToken: true
+
+---
+# Service Account for worker service
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codesign-worker-sa
+  namespace: codesign-production
+  labels:
+    app: celery-worker
+    component: worker
+automountServiceAccountToken: true
+
+---
+# Service Account for monitoring
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codesign-monitoring-sa
+  namespace: codesign-production
+  labels:
+    app: monitoring
+    component: observability
+automountServiceAccountToken: true
+
+---
+# Role for API service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codesign-api-role
+  namespace: codesign-production
+rules:
+- apiGroups: [""]
+  resources: ["pods", "configmaps", "secrets", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# Role for worker service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codesign-worker-role
+  namespace: codesign-production
+rules:
+- apiGroups: [""]
+  resources: ["pods", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+# Role for monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codesign-monitoring-role
+  namespace: codesign-production
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "nodes", "configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding for API service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codesign-api-binding
+  namespace: codesign-production
+subjects:
+- kind: ServiceAccount
+  name: codesign-api-sa
+  namespace: codesign-production
+roleRef:
+  kind: Role
+  name: codesign-api-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RoleBinding for worker service
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codesign-worker-binding
+  namespace: codesign-production
+subjects:
+- kind: ServiceAccount
+  name: codesign-worker-sa
+  namespace: codesign-production
+roleRef:
+  kind: Role
+  name: codesign-worker-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RoleBinding for monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codesign-monitoring-binding
+  namespace: codesign-production
+subjects:
+- kind: ServiceAccount
+  name: codesign-monitoring-sa
+  namespace: codesign-production
+roleRef:
+  kind: Role
+  name: codesign-monitoring-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRole for cross-namespace monitoring (if needed)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: codesign-cluster-monitoring
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/metrics", "nodes/proxy"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+  verbs: ["get"]
+
+---
+# ClusterRoleBinding for monitoring
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: codesign-cluster-monitoring-binding
+subjects:
+- kind: ServiceAccount
+  name: codesign-monitoring-sa
+  namespace: codesign-production
+roleRef:
+  kind: ClusterRole
+  name: codesign-cluster-monitoring
+  apiGroup: rbac.authorization.k8s.io

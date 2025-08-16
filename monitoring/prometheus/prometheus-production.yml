@@ -1,0 +1,370 @@
+# Prometheus Production Configuration
+# AI Hardware Co-Design Playground - Comprehensive Monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    cluster: 'codesign-production'
+    environment: 'production'
+    region: 'us-east-1'
+    datacenter: 'aws-us-east-1'
+    project: 'ai-hardware-codesign-playground'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - alertmanager:9093
+    scheme: http
+    timeout: 10s
+    api_version: v2
+
+# Rule files
+rule_files:
+  - "/etc/prometheus/rules/application/*.yml"
+  - "/etc/prometheus/rules/infrastructure/*.yml"
+  - "/etc/prometheus/rules/business/*.yml"
+  - "/etc/prometheus/rules/security/*.yml"
+  - "/etc/prometheus/rules/compliance/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+    - targets: ['localhost:9090']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Alertmanager monitoring
+  - job_name: 'alertmanager'
+    static_configs:
+    - targets: ['alertmanager:9093']
+    scrape_interval: 30s
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    kubernetes_sd_configs:
+    - role: node
+    relabel_configs:
+    - source_labels: [__address__]
+      regex: '(.*):10250'
+      target_label: __address__
+      replacement: '${1}:9100'
+    - source_labels: [__meta_kubernetes_node_name]
+      target_label: instance
+    - target_label: __path__
+      replacement: /metrics
+    scrape_interval: 30s
+
+  # Kubernetes API Server
+  - job_name: 'kubernetes-apiservers'
+    kubernetes_sd_configs:
+    - role: endpoints
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: default;kubernetes;https
+
+  # Kubernetes Nodes
+  - job_name: 'kubernetes-nodes'
+    kubernetes_sd_configs:
+    - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+    - action: labelmap
+      regex: __meta_kubernetes_node_label_(.+)
+    - target_label: __address__
+      replacement: kubernetes.default.svc:443
+    - source_labels: [__meta_kubernetes_node_name]
+      regex: (.+)
+      target_label: __metrics_path__
+      replacement: /api/v1/nodes/${1}/proxy/metrics
+
+  # Kubernetes Pods
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+    - role: pod
+      namespaces:
+        names:
+        - codesign-production
+        - monitoring
+        - kube-system
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+      action: keep
+      regex: true
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+      action: replace
+      target_label: __metrics_path__
+      regex: (.+)
+    - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+      action: replace
+      regex: ([^:]+)(?::\d+)?;(\d+)
+      replacement: $1:$2
+      target_label: __address__
+    - action: labelmap
+      regex: __meta_kubernetes_pod_label_(.+)
+    - source_labels: [__meta_kubernetes_namespace]
+      action: replace
+      target_label: kubernetes_namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      action: replace
+      target_label: kubernetes_pod_name
+
+  # Application Services
+  - job_name: 'codesign-api'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - codesign-production
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name]
+      action: keep
+      regex: codesign-api
+    - source_labels: [__meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: metrics
+    - source_labels: [__meta_kubernetes_namespace]
+      target_label: namespace
+    - source_labels: [__meta_kubernetes_service_name]
+      target_label: service
+    - source_labels: [__meta_kubernetes_pod_name]
+      target_label: pod
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  - job_name: 'celery-worker'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - codesign-production
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name]
+      action: keep
+      regex: celery-worker
+    - source_labels: [__meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: metrics
+    scrape_interval: 30s
+
+  # Database monitoring
+  - job_name: 'postgres-exporter'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - codesign-production
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name]
+      action: keep
+      regex: postgres.*
+    - source_labels: [__meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  - job_name: 'redis-exporter'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - codesign-production
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name]
+      action: keep
+      regex: redis.*
+    - source_labels: [__meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: metrics
+    scrape_interval: 30s
+
+  # Infrastructure monitoring
+  - job_name: 'kube-state-metrics'
+    static_configs:
+    - targets: ['kube-state-metrics:8080']
+    scrape_interval: 30s
+
+  - job_name: 'cadvisor'
+    kubernetes_sd_configs:
+    - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+    - action: labelmap
+      regex: __meta_kubernetes_node_label_(.+)
+    - target_label: __address__
+      replacement: kubernetes.default.svc:443
+    - source_labels: [__meta_kubernetes_node_name]
+      regex: (.+)
+      target_label: __metrics_path__
+      replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+    scrape_interval: 30s
+
+  # Ingress Controller
+  - job_name: 'nginx-ingress'
+    kubernetes_sd_configs:
+    - role: pod
+      namespaces:
+        names:
+        - ingress-nginx
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+      action: keep
+      regex: ingress-nginx
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+      action: keep
+      regex: true
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+      action: replace
+      target_label: __address__
+      regex: (.+)
+      replacement: $1:10254
+    scrape_interval: 30s
+
+  # Service Mesh (Istio)
+  - job_name: 'istio-mesh'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - istio-system
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: istio-proxy;http-monitoring
+    scrape_interval: 15s
+
+  - job_name: 'istio-policy'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - istio-system
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: istio-policy;http-monitoring
+    scrape_interval: 15s
+
+  - job_name: 'istio-telemetry'
+    kubernetes_sd_configs:
+    - role: endpoints
+      namespaces:
+        names:
+        - istio-system
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: istio-telemetry;http-monitoring
+    scrape_interval: 15s
+
+  # External services monitoring
+  - job_name: 'blackbox-exporter'
+    static_configs:
+    - targets:
+      - https://codesign.yourdomain.com
+      - https://api.codesign.yourdomain.com
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    relabel_configs:
+    - source_labels: [__address__]
+      target_label: __param_target
+    - source_labels: [__param_target]
+      target_label: instance
+    - target_label: __address__
+      replacement: blackbox-exporter:9115
+    scrape_interval: 30s
+
+  # Custom application metrics
+  - job_name: 'codesign-business-metrics'
+    static_configs:
+    - targets: ['codesign-api:9090']
+    metrics_path: /metrics/business
+    scrape_interval: 60s
+
+  # Security monitoring
+  - job_name: 'falco-metrics'
+    kubernetes_sd_configs:
+    - role: pod
+      namespaces:
+        names:
+        - falco-system
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_label_app]
+      action: keep
+      regex: falco
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+      action: keep
+      regex: true
+    scrape_interval: 30s
+
+  # CloudWatch metrics (via cloudwatch-exporter)
+  - job_name: 'cloudwatch-exporter'
+    static_configs:
+    - targets: ['cloudwatch-exporter:9106']
+    scrape_interval: 300s  # 5 minutes
+    scrape_timeout: 60s
+
+  # Custom exporters
+  - job_name: 'compliance-exporter'
+    static_configs:
+    - targets: ['compliance-auditor:8001']
+    metrics_path: /metrics
+    scrape_interval: 300s
+
+  - job_name: 'performance-exporter'
+    static_configs:
+    - targets: ['performance-monitor:9091']
+    scrape_interval: 30s
+
+# Remote write configuration for long-term storage
+remote_write:
+  - url: "https://prometheus-remote-write.yourdomain.com/api/v1/write"
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/secrets/remote-write-password
+    queue_config:
+      capacity: 10000
+      max_shards: 50
+      min_shards: 1
+      max_samples_per_send: 2000
+      batch_send_deadline: 5s
+      min_backoff: 30ms
+      max_backoff: 100ms
+    write_relabel_configs:
+    - source_labels: [__name__]
+      regex: 'go_.*|process_.*|promhttp_.*'
+      action: drop
+
+# Remote read configuration
+remote_read:
+  - url: "https://prometheus-remote-read.yourdomain.com/api/v1/read"
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/secrets/remote-read-password
+    read_recent: true
+
+# Storage configuration
+storage:
+  tsdb:
+    retention.time: 15d
+    retention.size: 50GB
+    no-lockfile: false
+    wal-compression: true

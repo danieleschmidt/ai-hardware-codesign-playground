@@ -1,0 +1,239 @@
+# AI Hardware Co-Design Playground - Terraform Configuration
+# Copy this file to terraform.tfvars and update values for your deployment
+
+# Environment Configuration
+environment     = "production"
+primary_region  = "us-east-1"
+secondary_regions = ["us-west-2", "eu-west-1"]
+
+# Network Configuration
+vpc_cidr = "10.0.0.0/16"
+
+# Domain Configuration
+domain_name           = "codesign.yourdomain.com"
+create_dns_zone       = true
+create_ssl_certificate = true
+
+# Kubernetes Configuration
+kubernetes_version = "1.28"
+
+# Node Group Configuration
+node_groups = {
+  general = {
+    instance_types = ["t3.large", "t3a.large"]
+    min_size      = 3
+    max_size      = 10
+    desired_size  = 3
+    disk_size     = 50
+    ami_type      = "AL2_x86_64"
+    capacity_type = "ON_DEMAND"
+    labels = {
+      role = "general"
+      tier = "application"
+    }
+    taints = []
+  }
+  
+  compute_optimized = {
+    instance_types = ["c5.xlarge", "c5.2xlarge", "c5a.xlarge"]
+    min_size      = 0
+    max_size      = 20
+    desired_size  = 2
+    disk_size     = 100
+    ami_type      = "AL2_x86_64"
+    capacity_type = "SPOT"
+    labels = {
+      role = "compute"
+      tier = "compute"
+      workload = "cpu-intensive"
+    }
+    taints = [
+      {
+        key    = "compute-optimized"
+        value  = "true"
+        effect = "NO_SCHEDULE"
+      }
+    ]
+  }
+  
+  memory_optimized = {
+    instance_types = ["r5.large", "r5.xlarge", "r5a.large"]
+    min_size      = 0
+    max_size      = 15
+    desired_size  = 1
+    disk_size     = 100
+    ami_type      = "AL2_x86_64"
+    capacity_type = "SPOT"
+    labels = {
+      role = "memory"
+      tier = "compute"
+      workload = "memory-intensive"
+    }
+    taints = [
+      {
+        key    = "memory-optimized"
+        value  = "true"
+        effect = "NO_SCHEDULE"
+      }
+    ]
+  }
+  
+  gpu_accelerated = {
+    instance_types = ["g4dn.xlarge", "g4dn.2xlarge"]
+    min_size      = 0
+    max_size      = 5
+    desired_size  = 0
+    disk_size     = 200
+    ami_type      = "AL2_x86_64_GPU"
+    capacity_type = "ON_DEMAND"
+    labels = {
+      role = "gpu"
+      tier = "compute"
+      workload = "gpu-accelerated"
+      "nvidia.com/gpu" = "true"
+    }
+    taints = [
+      {
+        key    = "nvidia.com/gpu"
+        value  = "true"
+        effect = "NO_SCHEDULE"
+      }
+    ]
+  }
+}
+
+# Database Configuration
+postgres_version              = "15.4"
+rds_instance_class           = "db.r6g.large"
+rds_allocated_storage        = 200
+rds_max_allocated_storage    = 2000
+rds_multi_az                 = true
+rds_backup_retention_period  = 30
+enable_rds_performance_insights = true
+
+# Redis Configuration
+redis_node_type              = "cache.r6g.large"
+redis_num_nodes             = 3
+redis_parameter_group_family = "redis7"
+enable_redis_auth           = true
+enable_redis_encryption     = true
+
+# Monitoring Configuration
+enable_prometheus    = true
+enable_grafana      = true
+enable_alertmanager = true
+enable_jaeger       = true
+enable_elasticsearch = true
+grafana_admin_password = "your_secure_grafana_password"
+
+# Alerting Configuration
+slack_webhook_url = "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+pagerduty_integration_key = "your_pagerduty_integration_key"
+email_alerts = [
+  "alerts@yourdomain.com",
+  "oncall@yourdomain.com"
+]
+
+# Security Configuration
+enable_vault              = true
+enable_falco             = true
+enable_policy_engine     = true
+enable_network_policies  = true
+enable_pod_security_policies = true
+
+# Backup Configuration
+backup_retention_days    = 90
+enable_cross_region_backup = true
+backup_regions          = ["us-west-2", "eu-west-1"]
+s3_backup_bucket        = "codesign-backups-production"
+enable_automated_snapshots = true
+
+# Auto Scaling Configuration
+enable_cluster_autoscaler = true
+enable_hpa               = true
+enable_vpa               = true
+
+# Cost Optimization
+enable_spot_instances    = true
+spot_instance_pools     = 3
+enable_scheduled_scaling = false
+
+# Multi-Region Configuration (Advanced)
+enable_multi_region = false
+region_config = {
+  "us-east-1" = {
+    enabled           = true
+    is_primary        = true
+    node_groups      = {}
+    database_replica = false
+    redis_replica    = false
+  }
+  "us-west-2" = {
+    enabled           = false
+    is_primary        = false
+    node_groups      = {}
+    database_replica = true
+    redis_replica    = true
+  }
+  "eu-west-1" = {
+    enabled           = false
+    is_primary        = false
+    node_groups      = {}
+    database_replica = true
+    redis_replica    = true
+  }
+}
+
+# Compliance Configuration
+enable_compliance_monitoring = true
+data_residency_regions      = ["us-east-1", "eu-west-1"]
+enable_audit_logging        = true
+audit_log_retention_days    = 2555  # 7 years
+
+# Performance Configuration
+enable_performance_monitoring = true
+enable_x_ray                 = true
+cloudwatch_retention_days    = 90
+
+# Disaster Recovery Configuration
+enable_disaster_recovery = true
+rto_minutes             = 60   # 1 hour Recovery Time Objective
+rpo_minutes             = 15   # 15 minutes Recovery Point Objective
+
+# Edge Computing Configuration (Optional)
+enable_edge_deployment = false
+edge_locations = [
+  "us-east-1-edge",
+  "us-west-2-edge",
+  "eu-west-1-edge"
+]
+
+# Development and Testing (Optional)
+enable_load_testing     = false
+enable_chaos_engineering = false
+
+# External Integrations (Optional)
+enable_datadog    = false
+datadog_api_key   = "your_datadog_api_key"
+enable_newrelic   = false
+newrelic_license_key = "your_newrelic_license_key"
+
+# Resource Tags
+additional_tags = {
+  Environment    = "production"
+  Project       = "AI Hardware Co-Design Playground"
+  Owner         = "Platform Engineering"
+  CostCenter    = "Engineering"
+  Compliance    = "GDPR,CCPA,PDPA"
+  Backup        = "Required"
+  Monitoring    = "Enabled"
+  Security      = "Hardened"
+  Criticality   = "High"
+  SLA           = "99.9%"
+  DataClass     = "Confidential"
+  Version       = "2.0"
+}
+
+cost_center = "Engineering"
+owner       = "Platform Engineering Team"
+project     = "AI Hardware Co-Design Playground"

@@ -1,0 +1,908 @@
+---
+# Main API Deployment with advanced features
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codesign-api
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+    component: backend
+    tier: application
+    version: v2.0
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    description: "Main API service for AI Hardware Co-Design Playground"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: codesign-api
+  template:
+    metadata:
+      labels:
+        app: codesign-api
+        component: backend
+        tier: application
+        version: v2.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+        backup.scheduled: "true"
+        monitoring.enabled: "true"
+        security.hardened: "true"
+        compliance.audit: "true"
+    spec:
+      serviceAccountName: codesign-api-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      
+      # Init containers for setup and health checks
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres-primary -p 5432 -U codesign; do
+            echo "Waiting for PostgreSQL..."
+            sleep 5
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      
+      - name: wait-for-redis
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until redis-cli -h redis-master -p 6379 -a $REDIS_PASSWORD ping; do
+            echo "Waiting for Redis..."
+            sleep 5
+          done
+          echo "Redis is ready!"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      
+      - name: database-migration
+        image: codesign-playground:latest
+        command:
+        - sh
+        - -c
+        - |
+          echo "Running database migrations..."
+          python -m alembic upgrade head
+          echo "Database migration completed!"
+        env:
+        - name: POSTGRES_URL
+          value: "postgresql://codesign:$(POSTGRES_PASSWORD)@postgres-primary:5432/codesign_db"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        - name: PYTHONPATH
+          value: "/app/backend"
+        volumeMounts:
+        - name: app-config
+          mountPath: /app/config
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+      
+      containers:
+      - name: codesign-api
+        image: codesign-playground:latest
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        
+        # Environment configuration
+        env:
+        # Core configuration
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: environment
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: log-level
+        - name: DEBUG
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: debug
+        - name: PYTHONPATH
+          value: "/app/backend"
+        
+        # Database configuration
+        - name: POSTGRES_URL
+          value: "postgresql://codesign:$(POSTGRES_PASSWORD)@postgres-primary:5432/codesign_db"
+        - name: POSTGRES_READ_URL
+          value: "postgresql://codesign:$(POSTGRES_PASSWORD)@postgres-replica:5432/codesign_db"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        - name: DATABASE_POOL_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: database-pool-size
+        - name: DATABASE_MAX_OVERFLOW
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: database-max-overflow
+        - name: DATABASE_POOL_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: database-pool-timeout
+        
+        # Redis configuration
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-sentinel:26379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        - name: REDIS_CLUSTER_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: redis-cluster-mode
+        - name: REDIS_SENTINEL_SERVICE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: redis-sentinel-service-name
+        
+        # Security configuration
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: secret-key
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: jwt-secret
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: encryption-key
+        - name: SECURITY_HARDENED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: security-hardened
+        - name: ENABLE_RATE_LIMITING
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: enable-rate-limiting
+        - name: ENABLE_REQUEST_VALIDATION
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: enable-request-validation
+        
+        # Performance configuration
+        - name: MAX_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: max-workers
+        - name: WORKER_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: worker-timeout
+        - name: MAX_REQUESTS
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: max-requests
+        - name: CACHE_SIZE_MB
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: cache-size-mb
+        
+        # Monitoring configuration
+        - name: ENABLE_MONITORING
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: enable-monitoring
+        - name: ENABLE_METRICS
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: enable-metrics
+        - name: ENABLE_TRACING
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: enable-tracing
+        - name: SENTRY_DSN
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: sentry-dsn
+              optional: true
+        
+        # Compliance configuration
+        - name: COMPLIANCE_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: compliance-region
+        - name: GDPR_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: gdpr-enabled
+        - name: AUDIT_LOGGING_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: codesign-config
+              key: audit-logging-enabled
+        
+        # Kubernetes-specific
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        
+        # Volume mounts
+        volumeMounts:
+        - name: app-config
+          mountPath: /app/config
+          readOnly: true
+        - name: compliance-storage
+          mountPath: /app/compliance
+        - name: cache-storage
+          mountPath: /app/cache
+        - name: logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+        - name: uploads
+          mountPath: /app/uploads
+        
+        # Resource management
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+            ephemeral-storage: "1Gi"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+            ephemeral-storage: "2Gi"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 30
+          successThreshold: 1
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+        
+        # Lifecycle hooks
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sh
+              - -c
+              - |
+                echo "Graceful shutdown initiated..."
+                # Give time for load balancer to remove this pod
+                sleep 15
+                # Send SIGTERM to main process
+                kill -TERM 1
+      
+      # Sidecar container for log collection
+      - name: log-collector
+        image: fluent/fluent-bit:latest
+        env:
+        - name: FLUENT_CONF
+          value: fluent-bit.conf
+        - name: FLUENT_OPT
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/app
+          readOnly: true
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      # Volumes
+      volumes:
+      - name: app-config
+        configMap:
+          name: codesign-config
+      - name: compliance-storage
+        persistentVolumeClaim:
+          claimName: compliance-pvc
+      - name: cache-storage
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: logs
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: uploads
+        emptyDir:
+          sizeLimit: 5Gi
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      
+      # Scheduling constraints
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - codesign-api
+              topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: node-type
+                operator: In
+                values:
+                - compute-optimized
+      
+      tolerations:
+      - key: "high-memory"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      
+      # DNS configuration
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "2"
+        - name: edns0
+
+---
+# Celery Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  namespace: codesign-production
+  labels:
+    app: celery-worker
+    component: worker
+    tier: application
+    version: v2.0
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+        component: worker
+        tier: application
+        version: v2.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9540"
+        monitoring.enabled: "true"
+    spec:
+      serviceAccountName: codesign-worker-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      terminationGracePeriodSeconds: 300  # Longer for task completion
+      
+      initContainers:
+      - name: wait-for-services
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for required services..."
+          until nslookup postgres-primary; do echo waiting for postgres; sleep 2; done
+          until nslookup redis-master; do echo waiting for redis; sleep 2; done
+          echo "All services are ready!"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      containers:
+      - name: celery-worker
+        image: codesign-playground-worker:latest
+        command:
+        - celery
+        - -A
+        - codesign_playground.tasks.celery
+        - worker
+        - --loglevel=info
+        - --concurrency=$(CELERY_WORKERS)
+        - --max-tasks-per-child=$(CELERY_MAX_TASKS_PER_CHILD)
+        - --max-memory-per-child=$(CELERY_MAX_MEMORY_PER_CHILD)
+        - --time-limit=$(CELERY_TIME_LIMIT)
+        - --soft-time-limit=$(CELERY_SOFT_TIME_LIMIT)
+        - --pool=prefork
+        - --optimization=fair
+        - --prefetch-multiplier=1
+        
+        env:
+        - name: ENV
+          value: "production"
+        - name: PYTHONPATH
+          value: "/app/backend"
+        
+        # Database configuration
+        - name: POSTGRES_URL
+          value: "postgresql://codesign:$(POSTGRES_PASSWORD)@postgres-primary:5432/codesign_db"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        
+        # Redis configuration
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-sentinel:26379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        
+        # Celery configuration
+        - name: CELERY_WORKERS
+          value: "4"
+        - name: CELERY_MAX_TASKS_PER_CHILD
+          value: "1000"
+        - name: CELERY_MAX_MEMORY_PER_CHILD
+          value: "200000"  # 200MB
+        - name: CELERY_TIME_LIMIT
+          value: "3600"    # 1 hour
+        - name: CELERY_SOFT_TIME_LIMIT
+          value: "3300"    # 55 minutes
+        - name: CELERY_ACKS_LATE
+          value: "true"
+        - name: CELERY_REJECT_ON_WORKER_LOST
+          value: "true"
+        
+        # Monitoring
+        - name: ENABLE_MONITORING
+          value: "true"
+        - name: SENTRY_DSN
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: sentry-dsn
+              optional: true
+        
+        # Kubernetes info
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        
+        volumeMounts:
+        - name: worker-config
+          mountPath: /app/config
+          readOnly: true
+        - name: compliance-storage
+          mountPath: /app/compliance
+        - name: cache-storage
+          mountPath: /app/cache
+        - name: logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+        
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "3Gi"
+            cpu: "2"
+        
+        livenessProbe:
+          exec:
+            command:
+            - celery
+            - -A
+            - codesign_playground.tasks.celery
+            - inspect
+            - ping
+          initialDelaySeconds: 120
+          periodSeconds: 60
+          timeoutSeconds: 30
+          failureThreshold: 3
+        
+        readinessProbe:
+          exec:
+            command:
+            - celery
+            - -A
+            - codesign_playground.tasks.celery
+            - status
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 20
+          failureThreshold: 3
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sh
+              - -c
+              - |
+                echo "Graceful worker shutdown..."
+                # Stop accepting new tasks
+                celery -A codesign_playground.tasks.celery control cancel_consumer default
+                # Wait for current tasks to complete (up to 5 minutes)
+                sleep 300
+      
+      # Celery monitoring sidecar
+      - name: celery-exporter
+        image: danihodovic/celery-exporter:latest
+        ports:
+        - containerPort: 9540
+          name: metrics
+        env:
+        - name: CELERY_EXPORTER_BROKER_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-sentinel:26379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        - name: CELERY_EXPORTER_LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      volumes:
+      - name: worker-config
+        configMap:
+          name: celery-config
+      - name: compliance-storage
+        persistentVolumeClaim:
+          claimName: compliance-pvc
+      - name: cache-storage
+        emptyDir:
+          sizeLimit: 512Mi
+      - name: logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 512Mi
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - celery-worker
+              topologyKey: kubernetes.io/hostname
+
+---
+# Celery Beat Scheduler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-scheduler
+  namespace: codesign-production
+  labels:
+    app: celery-scheduler
+    component: scheduler
+    tier: application
+spec:
+  replicas: 1  # Only one scheduler needed
+  selector:
+    matchLabels:
+      app: celery-scheduler
+  template:
+    metadata:
+      labels:
+        app: celery-scheduler
+        component: scheduler
+        tier: application
+      annotations:
+        monitoring.enabled: "true"
+    spec:
+      serviceAccountName: codesign-worker-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      
+      containers:
+      - name: celery-beat
+        image: codesign-playground-worker:latest
+        command:
+        - celery
+        - -A
+        - codesign_playground.tasks.celery
+        - beat
+        - --loglevel=info
+        - --schedule=/app/celerybeat/celerybeat-schedule
+        - --pidfile=/app/celerybeat/celerybeat.pid
+        
+        env:
+        - name: ENV
+          value: "production"
+        - name: PYTHONPATH
+          value: "/app/backend"
+        - name: POSTGRES_URL
+          value: "postgresql://codesign:$(POSTGRES_PASSWORD)@postgres-primary:5432/codesign_db"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: postgres-password
+        - name: REDIS_URL
+          value: "redis://:$(REDIS_PASSWORD)@redis-sentinel:26379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: codesign-secrets
+              key: redis-password
+        
+        volumeMounts:
+        - name: scheduler-storage
+          mountPath: /app/celerybeat
+        - name: logs
+          mountPath: /app/logs
+        
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      
+      volumes:
+      - name: scheduler-storage
+        persistentVolumeClaim:
+          claimName: scheduler-pvc
+      - name: logs
+        emptyDir:
+          sizeLimit: 512Mi
+
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: codesign-api
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+    component: backend
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  selector:
+    app: codesign-api
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+    protocol: TCP
+  - port: 9090
+    targetPort: 9090
+    name: metrics
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: None
+
+---
+# Headless service for StatefulSet components
+apiVersion: v1
+kind: Service
+metadata:
+  name: codesign-api-headless
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+spec:
+  selector:
+    app: codesign-api
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  clusterIP: None

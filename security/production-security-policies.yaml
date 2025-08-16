@@ -1,0 +1,621 @@
+# Production Security Policies
+# AI Hardware Co-Design Playground - Comprehensive Security Framework
+
+---
+# Pod Security Standards (Restricted Policy)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codesign-production
+  labels:
+    name: codesign-production
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn-version: latest
+
+---
+# Security Context Constraints (OpenShift) / Pod Security Policy (Kubernetes)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: codesign-restricted-psp
+  namespace: codesign-production
+  labels:
+    security.policy: restricted
+    compliance: "GDPR,CCPA,PDPA"
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+    seccomp.security.alpha.kubernetes.io/defaultProfileName: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/defaultProfileName: 'runtime/default'
+spec:
+  # Privilege restrictions
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  allowedCapabilities: []
+  defaultAddCapabilities: []
+  
+  # Volume restrictions
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+    - 'csi'
+  forbiddenSysctls:
+    - '*'
+  
+  # Host restrictions
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  hostPorts:
+    - min: 0
+      max: 0
+  
+  # User/Group restrictions
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  runAsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1000
+        max: 65535
+  
+  # Security context
+  seLinux:
+    rule: 'RunAsAny'
+  readOnlyRootFilesystem: false
+  allowedFlexVolumes: []
+  allowedCSIDrivers: []
+
+---
+# Network Security Policies
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: codesign-production
+  labels:
+    security.policy: deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-secure-access
+  namespace: codesign-production
+  labels:
+    security.policy: api-access
+spec:
+  podSelector:
+    matchLabels:
+      app: codesign-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8000
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  # Allow health checks from same namespace
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  # Allow database access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis access
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow HTTPS for external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Falco Runtime Security Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-security-rules
+  namespace: codesign-production
+  labels:
+    app: falco
+    component: security
+data:
+  codesign_rules.yaml: |
+    # Custom Falco rules for Codesign Playground
+    
+    - rule: Unauthorized Process in Container
+      desc: Detect unauthorized processes in application containers
+      condition: >
+        spawned_process and 
+        container and 
+        k8s.ns.name="codesign-production" and
+        not proc.name in (python, gunicorn, celery, redis-server, postgres)
+      output: >
+        Unauthorized process started in container 
+        (user=%user.name command=%proc.cmdline container=%container.name 
+        image=%container.image.repository:%container.image.tag)
+      priority: WARNING
+      tags: [process, container]
+    
+    - rule: Sensitive File Access
+      desc: Detect access to sensitive files
+      condition: >
+        open_read and
+        k8s.ns.name="codesign-production" and
+        (fd.name glob /etc/passwd or
+         fd.name glob /etc/shadow or
+         fd.name glob /app/secrets/* or
+         fd.name glob */.env* or
+         fd.name glob */credentials*)
+      output: >
+        Sensitive file accessed 
+        (user=%user.name command=%proc.cmdline file=%fd.name 
+        container=%container.name)
+      priority: HIGH
+      tags: [filesystem, secrets]
+    
+    - rule: Network Connection to Suspicious Host
+      desc: Detect connections to suspicious external hosts
+      condition: >
+        outbound and
+        k8s.ns.name="codesign-production" and
+        not fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and
+        not fd.sip.name in (amazonaws.com, github.com, docker.io, 
+                           googleapis.com, ubuntu.com, debian.org)
+      output: >
+        Suspicious outbound connection 
+        (user=%user.name command=%proc.cmdline connection=%fd.name 
+        container=%container.name)
+      priority: WARNING
+      tags: [network]
+    
+    - rule: Privilege Escalation Attempt
+      desc: Detect privilege escalation attempts
+      condition: >
+        spawned_process and
+        k8s.ns.name="codesign-production" and
+        (proc.name in (sudo, su, pkexec) or
+         proc.args contains "chmod +s" or
+         proc.args contains "setuid")
+      output: >
+        Privilege escalation attempt detected 
+        (user=%user.name command=%proc.cmdline container=%container.name)
+      priority: HIGH
+      tags: [privilege_escalation]
+    
+    - rule: Shell Access in Production
+      desc: Detect interactive shell access in production containers
+      condition: >
+        spawned_process and
+        k8s.ns.name="codesign-production" and
+        proc.name in (sh, bash, zsh, fish, csh, tcsh) and
+        proc.pname exists and
+        not proc.pname in (entrypoint.sh, init, systemd)
+      output: >
+        Shell access detected in production container 
+        (user=%user.name shell=%proc.name container=%container.name 
+        parent=%proc.pname)
+      priority: WARNING
+      tags: [shell, access]
+
+---
+# OPA Gatekeeper Constraint Templates
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredsecuritycontext
+  labels:
+    security.policy: gatekeeper
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredSecurityContext
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            runAsNonRoot:
+              type: boolean
+            runAsUser:
+              type: object
+              properties:
+                min:
+                  type: integer
+                max:
+                  type: integer
+            allowPrivilegeEscalation:
+              type: boolean
+            readOnlyRootFilesystem:
+              type: boolean
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredsecuritycontext
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "Container must run as non-root user"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation == true
+          msg := "Container must not allow privilege escalation"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsUser
+          msg := "Container must specify runAsUser"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.runAsUser < input.parameters.runAsUser.min
+          msg := sprintf("Container runAsUser must be >= %v", [input.parameters.runAsUser.min])
+        }
+
+---
+# Apply Security Context Constraint
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: K8sRequiredSecurityContext
+metadata:
+  name: must-run-as-nonroot
+  namespace: codesign-production
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "DaemonSet", "StatefulSet"]
+    namespaces: ["codesign-production"]
+  parameters:
+    runAsNonRoot: true
+    runAsUser:
+      min: 1000
+      max: 65535
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+
+---
+# Resource Quota for Security
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: security-resource-quota
+  namespace: codesign-production
+  labels:
+    security.quota: enforced
+spec:
+  hard:
+    # Limit total resources to prevent DoS
+    requests.cpu: "50"
+    requests.memory: "100Gi"
+    limits.cpu: "100"
+    limits.memory: "200Gi"
+    
+    # Object limits
+    pods: "100"
+    services: "20"
+    secrets: "50"
+    configmaps: "50"
+    persistentvolumeclaims: "50"
+    
+    # Storage limits
+    requests.storage: "1Ti"
+
+---
+# Limit Range for Security
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: security-limit-range
+  namespace: codesign-production
+  labels:
+    security.limits: enforced
+spec:
+  limits:
+  # Container limits
+  - type: Container
+    max:
+      cpu: "4"
+      memory: "8Gi"
+      ephemeral-storage: "10Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+      ephemeral-storage: "1Gi"
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+      ephemeral-storage: "2Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+      ephemeral-storage: "1Gi"
+  
+  # Pod limits
+  - type: Pod
+    max:
+      cpu: "8"
+      memory: "16Gi"
+      ephemeral-storage: "20Gi"
+
+---
+# Image Security Policy
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: image-security-policy
+  labels:
+    security.policy: image-validation
+spec:
+  clientConfig:
+    service:
+      name: image-security-webhook
+      namespace: codesign-production
+      path: "/validate"
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["apps"]
+    apiVersions: ["v1"]
+    resources: ["deployments", "daemonsets", "statefulsets"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
+
+---
+# Secrets Encryption Configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: encryption-config
+  namespace: codesign-production
+  labels:
+    security.encryption: enabled
+type: Opaque
+data:
+  encryption-config.yaml: |
+    apiVersion: apiserver.config.k8s.io/v1
+    kind: EncryptionConfiguration
+    resources:
+    - resources:
+      - secrets
+      providers:
+      - aescbc:
+          keys:
+          - name: key1
+            secret: $(openssl rand -base64 32)
+      - identity: {}
+    - resources:
+      - configmaps
+      providers:
+      - aescbc:
+          keys:
+          - name: key1
+            secret: $(openssl rand -base64 32)
+      - identity: {}
+
+---
+# Security Monitoring Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-monitoring-config
+  namespace: codesign-production
+  labels:
+    security.monitoring: enabled
+data:
+  security-rules.yaml: |
+    # Security monitoring rules
+    
+    security_events:
+      - name: unauthorized_access
+        pattern: "status:401|403"
+        threshold: 10
+        window: "5m"
+        severity: "warning"
+        
+      - name: privilege_escalation
+        pattern: "sudo|su|setuid"
+        threshold: 1
+        window: "1m"
+        severity: "critical"
+        
+      - name: suspicious_network
+        pattern: "outbound.*suspicious"
+        threshold: 5
+        window: "10m"
+        severity: "warning"
+        
+      - name: file_system_anomaly
+        pattern: "/etc/passwd|/etc/shadow|credentials"
+        threshold: 1
+        window: "1m"
+        severity: "high"
+
+---
+# Audit Policy Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-policy-config
+  namespace: codesign-production
+  labels:
+    security.audit: enabled
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    # Log all security-relevant events at metadata level
+    - level: Metadata
+      namespaces: ["codesign-production"]
+      verbs: ["create", "update", "patch", "delete"]
+      resources:
+      - group: ""
+        resources: ["secrets", "configmaps", "serviceaccounts"]
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    
+    # Log pod creation/deletion at request level
+    - level: Request
+      namespaces: ["codesign-production"]
+      verbs: ["create", "delete"]
+      resources:
+      - group: ""
+        resources: ["pods"]
+      - group: "apps"
+        resources: ["deployments", "daemonsets", "statefulsets"]
+    
+    # Log exec and portforward at request level
+    - level: Request
+      namespaces: ["codesign-production"]
+      verbs: ["create"]
+      resources:
+      - group: ""
+        resources: ["pods/exec", "pods/portforward"]
+    
+    # Log all access to secrets at metadata level
+    - level: Metadata
+      verbs: ["get", "list", "watch"]
+      resources:
+      - group: ""
+        resources: ["secrets"]
+    
+    # Don't log system events
+    - level: None
+      users: ["system:kube-proxy"]
+      verbs: ["watch"]
+      resources:
+      - group: ""
+        resources: ["endpoints", "services", "services/status"]
+
+---
+# Compliance Validation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: compliance-validation-config
+  namespace: codesign-production
+  labels:
+    compliance.validation: enabled
+data:
+  compliance-rules.yaml: |
+    # GDPR Compliance Rules
+    gdpr:
+      data_protection:
+        - rule: "data_encryption_at_rest"
+          check: "all_secrets_encrypted"
+          required: true
+        - rule: "data_encryption_in_transit"
+          check: "tls_enabled"
+          required: true
+        - rule: "data_minimization"
+          check: "minimal_data_collection"
+          required: true
+        - rule: "right_to_erasure"
+          check: "data_deletion_capability"
+          required: true
+      
+      access_control:
+        - rule: "authentication_required"
+          check: "auth_enabled"
+          required: true
+        - rule: "authorization_rbac"
+          check: "rbac_configured"
+          required: true
+        - rule: "audit_logging"
+          check: "audit_enabled"
+          required: true
+    
+    # CCPA Compliance Rules
+    ccpa:
+      privacy_rights:
+        - rule: "opt_out_capability"
+          check: "opt_out_implemented"
+          required: true
+        - rule: "data_transparency"
+          check: "data_usage_documented"
+          required: true
+      
+      security_requirements:
+        - rule: "reasonable_security"
+          check: "security_controls_implemented"
+          required: true
+    
+    # PDPA Compliance Rules
+    pdpa:
+      consent_management:
+        - rule: "explicit_consent"
+          check: "consent_mechanism"
+          required: true
+        - rule: "consent_withdrawal"
+          check: "withdrawal_capability"
+          required: true
+      
+      data_protection:
+        - rule: "data_protection_measures"
+          check: "protection_implemented"
+          required: true

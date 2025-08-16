@@ -1,0 +1,465 @@
+---
+# Horizontal Pod Autoscaler for API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: codesign-api-hpa
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: codesign-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  # CPU utilization
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Memory utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Custom metrics - request rate
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+  # Custom metrics - response time
+  - type: Pods
+    pods:
+      metric:
+        name: http_request_duration_seconds
+      target:
+        type: AverageValue
+        averageValue: "500m"  # 500ms
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 300  # 5 minutes
+      policies:
+      - type: Percent
+        value: 100    # Double the replicas
+        periodSeconds: 60
+      - type: Pods
+        value: 4      # Add 4 pods
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 600  # 10 minutes
+      policies:
+      - type: Percent
+        value: 50     # Cut in half
+        periodSeconds: 60
+      - type: Pods
+        value: 2      # Remove 2 pods
+        periodSeconds: 60
+      selectPolicy: Min
+
+---
+# Horizontal Pod Autoscaler for Workers
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: celery-worker-hpa
+  namespace: codesign-production
+  labels:
+    app: celery-worker
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: celery-worker
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  # CPU utilization
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # Memory utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 85
+  # Custom metrics - queue length
+  - type: Pods
+    pods:
+      metric:
+        name: celery_queue_length
+      target:
+        type: AverageValue
+        averageValue: "10"
+  # Custom metrics - task processing rate
+  - type: Pods
+    pods:
+      metric:
+        name: celery_tasks_per_second
+      target:
+        type: AverageValue
+        averageValue: "5"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 180  # 3 minutes
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 minutes
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+      selectPolicy: Min
+
+---
+# Vertical Pod Autoscaler for API (requires VPA operator)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: codesign-api-vpa
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+    component: autoscaling
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: codesign-api
+  updatePolicy:
+    updateMode: "Auto"  # Options: Off, Initial, Recreation, Auto
+  resourcePolicy:
+    containerPolicies:
+    - containerName: codesign-api
+      minAllowed:
+        cpu: "500m"
+        memory: "1Gi"
+      maxAllowed:
+        cpu: "4"
+        memory: "8Gi"
+      controlledResources: ["cpu", "memory"]
+      controlledValues: RequestsAndLimits
+    - containerName: log-collector
+      mode: "Off"  # Don't auto-scale sidecar containers
+
+---
+# Vertical Pod Autoscaler for Workers
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: celery-worker-vpa
+  namespace: codesign-production
+  labels:
+    app: celery-worker
+    component: autoscaling
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: celery-worker
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: celery-worker
+      minAllowed:
+        cpu: "200m"
+        memory: "512Mi"
+      maxAllowed:
+        cpu: "3"
+        memory: "6Gi"
+      controlledResources: ["cpu", "memory"]
+
+---
+# Pod Disruption Budget for API
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: codesign-api-pdb
+  namespace: codesign-production
+  labels:
+    app: codesign-api
+    component: resilience
+spec:
+  minAvailable: 2  # Always keep at least 2 pods running
+  selector:
+    matchLabels:
+      app: codesign-api
+
+---
+# Pod Disruption Budget for Workers
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: celery-worker-pdb
+  namespace: codesign-production
+  labels:
+    app: celery-worker
+    component: resilience
+spec:
+  minAvailable: 1  # Always keep at least 1 worker running
+  selector:
+    matchLabels:
+      app: celery-worker
+
+---
+# Pod Disruption Budget for Database
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-primary-pdb
+  namespace: codesign-production
+  labels:
+    app: postgres
+    component: resilience
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres
+      role: primary
+
+---
+# Pod Disruption Budget for Redis
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: codesign-production
+  labels:
+    app: redis
+    component: resilience
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: redis
+
+---
+# Priority Classes for workload prioritization
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: critical-priority
+  labels:
+    component: scheduling
+value: 1000
+globalDefault: false
+description: "Priority class for critical system components"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+  labels:
+    component: scheduling
+value: 800
+globalDefault: false
+description: "Priority class for high-priority application components"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: normal-priority
+  labels:
+    component: scheduling
+value: 500
+globalDefault: true
+description: "Priority class for normal application components"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority
+  labels:
+    component: scheduling
+value: 200
+globalDefault: false
+description: "Priority class for background tasks and batch jobs"
+
+---
+# Resource Quotas for namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: codesign-production-quota
+  namespace: codesign-production
+  labels:
+    component: resource-management
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "50"      # Total CPU requests
+    requests.memory: "100Gi"  # Total memory requests
+    limits.cpu: "100"       # Total CPU limits
+    limits.memory: "200Gi"  # Total memory limits
+    
+    # Storage resources
+    requests.storage: "1Ti"  # Total storage requests
+    persistentvolumeclaims: "50"  # Max PVCs
+    
+    # Object counts
+    pods: "100"             # Max pods
+    services: "20"          # Max services
+    secrets: "50"           # Max secrets
+    configmaps: "50"        # Max configmaps
+    
+    # Extended resources
+    requests.nvidia.com/gpu: "10"  # Max GPU requests (if applicable)
+
+---
+# Limit Ranges for resource governance
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: codesign-production-limits
+  namespace: codesign-production
+  labels:
+    component: resource-management
+spec:
+  limits:
+  # Pod limits
+  - type: Pod
+    max:
+      cpu: "8"
+      memory: "16Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+  
+  # Container limits
+  - type: Container
+    max:
+      cpu: "4"
+      memory: "8Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+  
+  # PVC limits
+  - type: PersistentVolumeClaim
+    max:
+      storage: "500Gi"
+    min:
+      storage: "1Gi"
+
+---
+# Network Policies for enhanced security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress-policy
+  namespace: codesign-production
+  labels:
+    component: security
+spec:
+  podSelector:
+    matchLabels:
+      app: codesign-api
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8000
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  # Allow internal health checks
+  - from:
+    - podSelector:
+        matchLabels:
+          app: codesign-api
+    ports:
+    - protocol: TCP
+      port: 8000
+
+---
+# Pod Security Policy (if PSP is enabled, deprecated in favor of Pod Security Standards)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: codesign-restricted-psp
+  labels:
+    component: security
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+    seccomp.security.alpha.kubernetes.io/defaultProfileName:  'runtime/default'
+    apparmor.security.beta.kubernetes.io/defaultProfileName:  'runtime/default'
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: false

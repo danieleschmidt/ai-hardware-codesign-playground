@@ -1,0 +1,328 @@
+# Application Alert Rules
+# AI Hardware Co-Design Playground - Production Alerting
+
+groups:
+- name: codesign.application.alerts
+  interval: 30s
+  rules:
+  
+  # API Health and Availability
+  - alert: CodesignAPIDown
+    expr: up{job="codesign-api"} == 0
+    for: 2m
+    labels:
+      severity: critical
+      service: api
+      category: availability
+      runbook: "https://runbooks.codesign.yourdomain.com/api-down"
+    annotations:
+      summary: "Codesign API is down"
+      description: "Codesign API has been down for more than 2 minutes. Instance: {{ $labels.instance }}"
+      dashboard: "https://grafana.yourdomain.com/d/api-overview"
+      
+  - alert: CodesignAPIHighErrorRate
+    expr: |
+      (
+        sum(rate(http_requests_total{job="codesign-api",status=~"5.."}[5m])) /
+        sum(rate(http_requests_total{job="codesign-api"}[5m]))
+      ) > 0.05
+    for: 5m
+    labels:
+      severity: warning
+      service: api
+      category: errors
+      runbook: "https://runbooks.codesign.yourdomain.com/high-error-rate"
+    annotations:
+      summary: "High error rate on Codesign API"
+      description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+      dashboard: "https://grafana.yourdomain.com/d/api-errors"
+
+  - alert: CodesignAPICriticalErrorRate
+    expr: |
+      (
+        sum(rate(http_requests_total{job="codesign-api",status=~"5.."}[5m])) /
+        sum(rate(http_requests_total{job="codesign-api"}[5m]))
+      ) > 0.15
+    for: 2m
+    labels:
+      severity: critical
+      service: api
+      category: errors
+      runbook: "https://runbooks.codesign.yourdomain.com/critical-error-rate"
+    annotations:
+      summary: "Critical error rate on Codesign API"
+      description: "Error rate is {{ $value | humanizePercentage }} (threshold: 15%)"
+      dashboard: "https://grafana.yourdomain.com/d/api-errors"
+
+  # API Performance
+  - alert: CodesignAPIHighLatency
+    expr: |
+      histogram_quantile(0.95, 
+        sum(rate(http_request_duration_seconds_bucket{job="codesign-api"}[5m])) by (le)
+      ) > 2
+    for: 10m
+    labels:
+      severity: warning
+      service: api
+      category: performance
+      runbook: "https://runbooks.codesign.yourdomain.com/high-latency"
+    annotations:
+      summary: "High latency on Codesign API"
+      description: "95th percentile latency is {{ $value }}s (threshold: 2s)"
+      dashboard: "https://grafana.yourdomain.com/d/api-performance"
+
+  - alert: CodesignAPICriticalLatency
+    expr: |
+      histogram_quantile(0.95, 
+        sum(rate(http_request_duration_seconds_bucket{job="codesign-api"}[5m])) by (le)
+      ) > 5
+    for: 5m
+    labels:
+      severity: critical
+      service: api
+      category: performance
+      runbook: "https://runbooks.codesign.yourdomain.com/critical-latency"
+    annotations:
+      summary: "Critical latency on Codesign API"
+      description: "95th percentile latency is {{ $value }}s (threshold: 5s)"
+      dashboard: "https://grafana.yourdomain.com/d/api-performance"
+
+  # API Rate Limiting
+  - alert: CodesignAPIRateLimitHit
+    expr: |
+      sum(rate(http_requests_total{job="codesign-api",status="429"}[5m])) > 10
+    for: 2m
+    labels:
+      severity: warning
+      service: api
+      category: capacity
+      runbook: "https://runbooks.codesign.yourdomain.com/rate-limit"
+    annotations:
+      summary: "API rate limiting triggered"
+      description: "Rate limiting is triggering {{ $value }} requests/second"
+      dashboard: "https://grafana.yourdomain.com/d/api-rate-limiting"
+
+  # Worker Health and Performance
+  - alert: CeleryWorkerDown
+    expr: up{job="celery-worker"} == 0
+    for: 3m
+    labels:
+      severity: critical
+      service: worker
+      category: availability
+      runbook: "https://runbooks.codesign.yourdomain.com/worker-down"
+    annotations:
+      summary: "Celery worker is down"
+      description: "Celery worker has been down for more than 3 minutes. Instance: {{ $labels.instance }}"
+      dashboard: "https://grafana.yourdomain.com/d/celery-overview"
+
+  - alert: CeleryQueueBacklog
+    expr: |
+      sum(celery_queue_length{job="celery-worker"}) > 1000
+    for: 5m
+    labels:
+      severity: warning
+      service: worker
+      category: capacity
+      runbook: "https://runbooks.codesign.yourdomain.com/queue-backlog"
+    annotations:
+      summary: "High Celery queue backlog"
+      description: "Queue length is {{ $value }} tasks (threshold: 1000)"
+      dashboard: "https://grafana.yourdomain.com/d/celery-queues"
+
+  - alert: CeleryWorkerHighMemoryUsage
+    expr: |
+      (
+        container_memory_usage_bytes{pod=~"celery-worker-.*"} /
+        container_spec_memory_limit_bytes
+      ) > 0.9
+    for: 10m
+    labels:
+      severity: warning
+      service: worker
+      category: resources
+      runbook: "https://runbooks.codesign.yourdomain.com/worker-memory"
+    annotations:
+      summary: "High memory usage on Celery worker"
+      description: "Memory usage is {{ $value | humanizePercentage }} of limit on {{ $labels.pod }}"
+      dashboard: "https://grafana.yourdomain.com/d/celery-resources"
+
+  - alert: CeleryTaskFailureRate
+    expr: |
+      (
+        sum(rate(celery_task_total{job="celery-worker",state="FAILURE"}[5m])) /
+        sum(rate(celery_task_total{job="celery-worker"}[5m]))
+      ) > 0.10
+    for: 5m
+    labels:
+      severity: warning
+      service: worker
+      category: errors
+      runbook: "https://runbooks.codesign.yourdomain.com/task-failures"
+    annotations:
+      summary: "High Celery task failure rate"
+      description: "Task failure rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+      dashboard: "https://grafana.yourdomain.com/d/celery-tasks"
+
+  # Application-specific Business Logic Alerts
+  - alert: AcceleratorDesignFailureRate
+    expr: |
+      (
+        sum(rate(accelerator_design_total{status="failed"}[10m])) /
+        sum(rate(accelerator_design_total[10m]))
+      ) > 0.20
+    for: 10m
+    labels:
+      severity: warning
+      service: accelerator-design
+      category: business
+      runbook: "https://runbooks.codesign.yourdomain.com/accelerator-design-failures"
+    annotations:
+      summary: "High accelerator design failure rate"
+      description: "Design failure rate is {{ $value | humanizePercentage }} (threshold: 20%)"
+      dashboard: "https://grafana.yourdomain.com/d/business-metrics"
+
+  - alert: ModelOptimizationTimeout
+    expr: |
+      sum(increase(model_optimization_duration_seconds_bucket{le="3600"}[1h])) == 0 AND
+      sum(increase(model_optimization_duration_seconds_count[1h])) > 0
+    for: 15m
+    labels:
+      severity: warning
+      service: model-optimization
+      category: performance
+      runbook: "https://runbooks.codesign.yourdomain.com/optimization-timeout"
+    annotations:
+      summary: "Model optimization taking too long"
+      description: "No optimizations completed in the last hour, all are timing out"
+      dashboard: "https://grafana.yourdomain.com/d/optimization-metrics"
+
+  # Security Alerts
+  - alert: SuspiciousAPIActivity
+    expr: |
+      sum(rate(http_requests_total{job="codesign-api",status="403"}[5m])) > 20
+    for: 2m
+    labels:
+      severity: warning
+      service: api
+      category: security
+      runbook: "https://runbooks.codesign.yourdomain.com/suspicious-activity"
+    annotations:
+      summary: "Suspicious API activity detected"
+      description: "High rate of 403 responses: {{ $value }} requests/second"
+      dashboard: "https://grafana.yourdomain.com/d/security-dashboard"
+
+  - alert: UnauthorizedAccessAttempts
+    expr: |
+      sum(rate(http_requests_total{job="codesign-api",status="401"}[5m])) > 50
+    for: 3m
+    labels:
+      severity: critical
+      service: api
+      category: security
+      runbook: "https://runbooks.codesign.yourdomain.com/unauthorized-access"
+    annotations:
+      summary: "High rate of unauthorized access attempts"
+      description: "Unauthorized access rate: {{ $value }} requests/second"
+      dashboard: "https://grafana.yourdomain.com/d/security-dashboard"
+
+  # Compliance Alerts
+  - alert: ComplianceViolation
+    expr: |
+      increase(compliance_violations_total[5m]) > 0
+    for: 0m
+    labels:
+      severity: critical
+      service: compliance
+      category: compliance
+      runbook: "https://runbooks.codesign.yourdomain.com/compliance-violation"
+    annotations:
+      summary: "Compliance violation detected"
+      description: "{{ $value }} compliance violations detected in the last 5 minutes"
+      dashboard: "https://grafana.yourdomain.com/d/compliance-dashboard"
+
+  - alert: DataRetentionPolicyViolation
+    expr: |
+      data_retention_violations_total > 0
+    for: 0m
+    labels:
+      severity: critical
+      service: compliance
+      category: data-governance
+      runbook: "https://runbooks.codesign.yourdomain.com/data-retention"
+    annotations:
+      summary: "Data retention policy violation"
+      description: "{{ $value }} data retention violations detected"
+      dashboard: "https://grafana.yourdomain.com/d/compliance-dashboard"
+
+  # Backup and Recovery Alerts
+  - alert: BackupJobFailed
+    expr: |
+      increase(backup_job_failures_total[1h]) > 0
+    for: 0m
+    labels:
+      severity: critical
+      service: backup
+      category: data-protection
+      runbook: "https://runbooks.codesign.yourdomain.com/backup-failure"
+    annotations:
+      summary: "Backup job failed"
+      description: "{{ $value }} backup jobs failed in the last hour"
+      dashboard: "https://grafana.yourdomain.com/d/backup-dashboard"
+
+  - alert: BackupJobMissing
+    expr: |
+      time() - backup_job_last_success_timestamp > 86400
+    for: 0m
+    labels:
+      severity: critical
+      service: backup
+      category: data-protection
+      runbook: "https://runbooks.codesign.yourdomain.com/backup-missing"
+    annotations:
+      summary: "Backup job hasn't run for 24 hours"
+      description: "Last successful backup was {{ $value | humanizeDuration }} ago"
+      dashboard: "https://grafana.yourdomain.com/d/backup-dashboard"
+
+  # Application Health Synthesis
+  - alert: ApplicationDegraded
+    expr: |
+      (
+        (up{job="codesign-api"} == 0) OR
+        (up{job="celery-worker"} == 0) OR
+        (
+          sum(rate(http_requests_total{job="codesign-api",status=~"5.."}[5m])) /
+          sum(rate(http_requests_total{job="codesign-api"}[5m]))
+        ) > 0.10
+      )
+    for: 5m
+    labels:
+      severity: warning
+      service: platform
+      category: health
+      runbook: "https://runbooks.codesign.yourdomain.com/application-degraded"
+    annotations:
+      summary: "Application performance degraded"
+      description: "Multiple components showing degraded performance"
+      dashboard: "https://grafana.yourdomain.com/d/platform-overview"
+
+  - alert: ApplicationOutage
+    expr: |
+      (
+        (up{job="codesign-api"} == 0) AND
+        (up{job="celery-worker"} == 0)
+      ) OR
+      (
+        sum(rate(http_requests_total{job="codesign-api",status=~"5.."}[5m])) /
+        sum(rate(http_requests_total{job="codesign-api"}[5m]))
+      ) > 0.50
+    for: 2m
+    labels:
+      severity: critical
+      service: platform
+      category: outage
+      runbook: "https://runbooks.codesign.yourdomain.com/application-outage"
+    annotations:
+      summary: "Application outage detected"
+      description: "Critical application components are down or severely degraded"
+      dashboard: "https://grafana.yourdomain.com/d/platform-overview"

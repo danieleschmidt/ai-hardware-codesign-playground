@@ -1,0 +1,591 @@
+# HashiCorp Vault Configuration for Production
+# AI Hardware Co-Design Playground - Secrets Management
+
+---
+# Vault StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: codesign-production
+  labels:
+    app: vault
+    component: secrets-management
+    version: 1.15.0
+spec:
+  serviceName: vault
+  replicas: 3
+  selector:
+    matchLabels:
+      app: vault
+  template:
+    metadata:
+      labels:
+        app: vault
+        component: secrets-management
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8200"
+        prometheus.io/path: "/v1/sys/metrics"
+    spec:
+      serviceAccountName: vault
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+      - name: vault-init
+        image: vault:1.15.0
+        command:
+        - sh
+        - -c
+        - |
+          mkdir -p /vault/data
+          chown -R 100:1000 /vault/data
+          chmod 750 /vault/data
+        volumeMounts:
+        - name: vault-storage
+          mountPath: /vault/data
+        securityContext:
+          runAsUser: 0
+          capabilities:
+            add:
+            - CHOWN
+            drop:
+            - ALL
+      containers:
+      - name: vault
+        image: vault:1.15.0
+        ports:
+        - containerPort: 8200
+          name: api
+        - containerPort: 8201
+          name: cluster
+        env:
+        - name: VAULT_ADDR
+          value: "http://127.0.0.1:8200"
+        - name: VAULT_API_ADDR
+          value: "http://$(POD_IP):8200"
+        - name: VAULT_CLUSTER_ADDR
+          value: "https://$(POD_IP):8201"
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: VAULT_LOG_LEVEL
+          value: "INFO"
+        - name: VAULT_LOG_FORMAT
+          value: "json"
+        args:
+        - vault
+        - server
+        - -config=/vault/config/vault.hcl
+        volumeMounts:
+        - name: vault-config
+          mountPath: /vault/config
+          readOnly: true
+        - name: vault-storage
+          mountPath: /vault/data
+        - name: vault-tls
+          mountPath: /vault/tls
+          readOnly: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+            port: 8200
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /v1/sys/health?standbyok=true
+            port: 8200
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - IPC_LOCK
+      volumes:
+      - name: vault-config
+        configMap:
+          name: vault-config
+      - name: vault-tls
+        secret:
+          secretName: vault-tls
+  volumeClaimTemplates:
+  - metadata:
+      name: vault-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: encrypted-ssd
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# Vault Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+  namespace: codesign-production
+  labels:
+    app: vault
+data:
+  vault.hcl: |
+    # Vault Configuration for Production
+    
+    # Storage backend
+    storage "raft" {
+      path = "/vault/data"
+      node_id = "vault-$(POD_NAME)"
+      
+      retry_join {
+        leader_api_addr = "http://vault-0.vault:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-1.vault:8200"
+      }
+      retry_join {
+        leader_api_addr = "http://vault-2.vault:8200"
+      }
+    }
+    
+    # API listener
+    listener "tcp" {
+      address = "0.0.0.0:8200"
+      cluster_address = "0.0.0.0:8201"
+      tls_cert_file = "/vault/tls/tls.crt"
+      tls_key_file = "/vault/tls/tls.key"
+      tls_client_ca_file = "/vault/tls/ca.crt"
+      tls_min_version = "tls12"
+      
+      # Security headers
+      tls_cipher_suites = "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
+      
+      # Enable metrics
+      telemetry {
+        unauthenticated_metrics_access = true
+        prometheus_retention_time = "24h"
+      }
+    }
+    
+    # Cluster configuration
+    cluster_addr = "https://$(POD_IP):8201"
+    api_addr = "https://$(POD_IP):8200"
+    
+    # Disable mlock for containers
+    disable_mlock = true
+    
+    # UI
+    ui = true
+    
+    # Logging
+    log_level = "INFO"
+    log_format = "json"
+    
+    # Seal configuration (for auto-unseal with cloud KMS)
+    seal "awskms" {
+      region = "us-east-1"
+      kms_key_id = "alias/vault-unseal-key"
+      endpoint = "https://kms.us-east-1.amazonaws.com"
+    }
+    
+    # Telemetry
+    telemetry {
+      prometheus_retention_time = "24h"
+      disable_hostname = true
+    }
+
+---
+# Vault Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: codesign-production
+  labels:
+    app: vault
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  clusterIP: None
+  ports:
+  - name: api
+    port: 8200
+    targetPort: 8200
+  - name: cluster
+    port: 8201
+    targetPort: 8201
+  selector:
+    app: vault
+
+---
+# Vault External Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-external
+  namespace: codesign-production
+  labels:
+    app: vault
+spec:
+  type: LoadBalancer
+  ports:
+  - name: api
+    port: 8200
+    targetPort: 8200
+  selector:
+    app: vault
+
+---
+# Vault ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault
+  namespace: codesign-production
+  labels:
+    app: vault
+
+---
+# Vault ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vault
+  labels:
+    app: vault
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list"]
+
+---
+# Vault ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault
+  labels:
+    app: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vault
+subjects:
+- kind: ServiceAccount
+  name: vault
+  namespace: codesign-production
+
+---
+# Vault Policies ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-policies
+  namespace: codesign-production
+  labels:
+    app: vault
+data:
+  # Application policy for Codesign API
+  codesign-api-policy.hcl: |
+    # Codesign API Vault Policy
+    
+    # Database credentials
+    path "database/creds/codesign-api" {
+      capabilities = ["read"]
+    }
+    
+    # Application secrets
+    path "secret/data/codesign/api/*" {
+      capabilities = ["read"]
+    }
+    
+    # Redis credentials
+    path "secret/data/codesign/redis/*" {
+      capabilities = ["read"]
+    }
+    
+    # Encryption keys
+    path "transit/encrypt/codesign-api" {
+      capabilities = ["update"]
+    }
+    
+    path "transit/decrypt/codesign-api" {
+      capabilities = ["update"]
+    }
+    
+    # PKI for certificates
+    path "pki/issue/codesign-api" {
+      capabilities = ["update"]
+    }
+
+  # Worker policy for Celery workers
+  codesign-worker-policy.hcl: |
+    # Codesign Worker Vault Policy
+    
+    # Database credentials (read-only)
+    path "database/creds/codesign-readonly" {
+      capabilities = ["read"]
+    }
+    
+    # Worker secrets
+    path "secret/data/codesign/worker/*" {
+      capabilities = ["read"]
+    }
+    
+    # Redis credentials
+    path "secret/data/codesign/redis/*" {
+      capabilities = ["read"]
+    }
+    
+    # Limited encryption access
+    path "transit/encrypt/codesign-worker" {
+      capabilities = ["update"]
+    }
+
+  # Admin policy for operations
+  codesign-admin-policy.hcl: |
+    # Codesign Admin Vault Policy
+    
+    # Full access to codesign secrets
+    path "secret/data/codesign/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    path "secret/metadata/codesign/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    # Database management
+    path "database/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    # Transit keys management
+    path "transit/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    # PKI management
+    path "pki/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    # Auth methods
+    path "auth/*" {
+      capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+    }
+    
+    # Policies
+    path "sys/policies/acl/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+
+  # Backup policy
+  vault-backup-policy.hcl: |
+    # Vault Backup Policy
+    
+    # Snapshot capabilities
+    path "sys/storage/raft/snapshot" {
+      capabilities = ["read"]
+    }
+    
+    # System status
+    path "sys/health" {
+      capabilities = ["read"]
+    }
+    
+    path "sys/seal-status" {
+      capabilities = ["read"]
+    }
+
+---
+# Vault Auth Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-auth-config
+  namespace: codesign-production
+  labels:
+    app: vault
+data:
+  auth-setup.sh: |
+    #!/bin/bash
+    # Vault Authentication Setup Script
+    
+    set -e
+    
+    # Wait for Vault to be ready
+    until vault status > /dev/null 2>&1; do
+      echo "Waiting for Vault to be ready..."
+      sleep 5
+    done
+    
+    # Enable Kubernetes auth method
+    vault auth enable kubernetes
+    
+    # Configure Kubernetes auth
+    vault write auth/kubernetes/config \
+      token_reviewer_jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+      kubernetes_host="https://${KUBERNETES_PORT_443_TCP_ADDR}:443" \
+      kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    
+    # Create roles for different services
+    vault write auth/kubernetes/role/codesign-api \
+      bound_service_account_names=codesign-api-sa \
+      bound_service_account_namespaces=codesign-production \
+      policies=codesign-api-policy \
+      ttl=24h
+    
+    vault write auth/kubernetes/role/codesign-worker \
+      bound_service_account_names=codesign-worker-sa \
+      bound_service_account_namespaces=codesign-production \
+      policies=codesign-worker-policy \
+      ttl=24h
+    
+    vault write auth/kubernetes/role/codesign-admin \
+      bound_service_account_names=codesign-admin-sa \
+      bound_service_account_namespaces=codesign-production \
+      policies=codesign-admin-policy \
+      ttl=8h
+    
+    # Enable secret engines
+    vault secrets enable -path=secret kv-v2
+    vault secrets enable -path=database database
+    vault secrets enable -path=transit transit
+    vault secrets enable -path=pki pki
+    
+    # Configure database secrets engine
+    vault write database/config/postgresql \
+      plugin_name=postgresql-database-plugin \
+      connection_url="postgresql://{{username}}:{{password}}@postgres:5432/codesign_db?sslmode=disable" \
+      allowed_roles="codesign-api,codesign-readonly" \
+      username="vault" \
+      password="${POSTGRES_VAULT_PASSWORD}"
+    
+    # Create database roles
+    vault write database/roles/codesign-api \
+      db_name=postgresql \
+      creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO \"{{name}}\";" \
+      default_ttl="1h" \
+      max_ttl="24h"
+    
+    vault write database/roles/codesign-readonly \
+      db_name=postgresql \
+      creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}'; GRANT SELECT ON ALL TABLES IN SCHEMA public TO \"{{name}}\";" \
+      default_ttl="1h" \
+      max_ttl="24h"
+    
+    # Configure transit encryption
+    vault write -f transit/keys/codesign-api
+    vault write -f transit/keys/codesign-worker
+    vault write -f transit/keys/codesign-compliance
+    
+    # Configure PKI
+    vault write -field=certificate pki/root/generate/internal \
+      common_name="Codesign Internal CA" \
+      ttl=87600h > CA_cert.crt
+    
+    vault write pki/config/urls \
+      issuing_certificates="https://vault.codesign-production.svc.cluster.local:8200/v1/pki/ca" \
+      crl_distribution_points="https://vault.codesign-production.svc.cluster.local:8200/v1/pki/crl"
+    
+    vault write pki/roles/codesign-api \
+      allowed_domains="codesign-production.svc.cluster.local,localhost" \
+      allow_subdomains=true \
+      max_ttl="720h"
+    
+    echo "Vault setup completed successfully!"
+
+---
+# Vault Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-backup
+  namespace: codesign-production
+  labels:
+    app: vault
+    component: backup
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: vault-backup
+          containers:
+          - name: vault-backup
+            image: vault:1.15.0
+            command:
+            - sh
+            - -c
+            - |
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              vault operator raft snapshot save /backup/vault_snapshot_${timestamp}.snap
+              echo "Backup completed: vault_snapshot_${timestamp}.snap"
+            env:
+            - name: VAULT_ADDR
+              value: "https://vault:8200"
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vault-backup-token
+                  key: token
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+            - name: vault-tls
+              mountPath: /vault/tls
+              readOnly: true
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: vault-backup-pvc
+          - name: vault-tls
+            secret:
+              secretName: vault-tls
+          restartPolicy: OnFailure
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+
+---
+# Vault Backup PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-backup-pvc
+  namespace: codesign-production
+  labels:
+    app: vault
+    component: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: backup-storage
+  resources:
+    requests:
+      storage: 50Gi

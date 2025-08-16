@@ -1,0 +1,576 @@
+# Multi-Region Kubernetes Deployment Configuration
+# AI Hardware Co-Design Playground - Global Multi-Region Setup
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multi-region-config
+  namespace: codesign-production
+  labels:
+    app: codesign-playground
+    component: multi-region
+data:
+  regions.yaml: |
+    regions:
+      primary:
+        name: us-east-1
+        zone: us-east-1a,us-east-1b,us-east-1c
+        cluster_endpoint: https://eks-cluster-us-east-1.amazonaws.com
+        data_residency: US
+        compliance_zone: CCPA
+        weight: 100
+        active: true
+        
+      secondary:
+        - name: us-west-2
+          zone: us-west-2a,us-west-2b,us-west-2c
+          cluster_endpoint: https://eks-cluster-us-west-2.amazonaws.com
+          data_residency: US
+          compliance_zone: CCPA
+          weight: 50
+          active: true
+          read_replica: true
+          
+        - name: eu-west-1
+          zone: eu-west-1a,eu-west-1b,eu-west-1c
+          cluster_endpoint: https://eks-cluster-eu-west-1.amazonaws.com
+          data_residency: EU
+          compliance_zone: GDPR
+          weight: 50
+          active: true
+          read_replica: true
+          
+        - name: ap-southeast-1
+          zone: ap-southeast-1a,ap-southeast-1b,ap-southeast-1c
+          cluster_endpoint: https://eks-cluster-ap-southeast-1.amazonaws.com
+          data_residency: APAC
+          compliance_zone: PDPA
+          weight: 30
+          active: false
+          read_replica: true
+
+  routing.yaml: |
+    routing:
+      strategy: geo-proximity
+      health_check:
+        enabled: true
+        interval: 30s
+        timeout: 10s
+        healthy_threshold: 2
+        unhealthy_threshold: 3
+        
+      failover:
+        enabled: true
+        type: automatic
+        rto_seconds: 300  # 5 minutes
+        
+      load_balancing:
+        algorithm: weighted_round_robin
+        session_affinity: none
+        cross_zone: true
+        
+      geo_routing:
+        - region: us-east-1
+          countries: ["US", "CA", "MX"]
+          latency_threshold_ms: 100
+          
+        - region: eu-west-1
+          countries: ["GB", "DE", "FR", "IT", "ES", "NL", "BE", "AT", "CH"]
+          latency_threshold_ms: 80
+          
+        - region: ap-southeast-1
+          countries: ["SG", "MY", "TH", "ID", "PH", "VN"]
+          latency_threshold_ms: 120
+
+  compliance.yaml: |
+    compliance:
+      data_localization:
+        enabled: true
+        enforce_residency: true
+        
+      gdpr:
+        regions: ["eu-west-1", "eu-central-1"]
+        data_retention_days: 2555
+        right_to_erasure: true
+        consent_management: true
+        
+      ccpa:
+        regions: ["us-east-1", "us-west-2"]
+        data_retention_days: 1095
+        opt_out_enabled: true
+        
+      pdpa:
+        regions: ["ap-southeast-1", "ap-south-1"]
+        data_retention_days: 2190
+        consent_required: true
+
+---
+# Global Service for Multi-Region Load Balancing
+apiVersion: v1
+kind: Service
+metadata:
+  name: codesign-global-service
+  namespace: codesign-production
+  labels:
+    app: codesign-playground
+    component: global-lb
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "10"
+    external-dns.alpha.kubernetes.io/hostname: api.codesign.yourdomain.com
+    external-dns.alpha.kubernetes.io/geo-dns-policy: "geo"
+spec:
+  type: LoadBalancer
+  selector:
+    app: codesign-api
+  ports:
+  - port: 443
+    targetPort: 8000
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+    name: http
+
+---
+# Multi-Region Ingress Controller
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codesign-global-ingress
+  namespace: codesign-production
+  labels:
+    app: codesign-playground
+    component: global-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    external-dns.alpha.kubernetes.io/hostname: "codesign.yourdomain.com,api.codesign.yourdomain.com"
+    external-dns.alpha.kubernetes.io/target: "global-lb.codesign.yourdomain.com"
+    # Geo-routing annotations
+    nginx.ingress.kubernetes.io/server-snippet: |
+      set $region_preference "";
+      if ($geoip_country_code ~ ^(US|CA|MX)$) {
+          set $region_preference "us-east-1";
+      }
+      if ($geoip_country_code ~ ^(GB|DE|FR|IT|ES|NL|BE|AT|CH)$) {
+          set $region_preference "eu-west-1";
+      }
+      if ($geoip_country_code ~ ^(SG|MY|TH|ID|PH|VN)$) {
+          set $region_preference "ap-southeast-1";
+      }
+      add_header X-Region-Preference $region_preference always;
+spec:
+  tls:
+  - hosts:
+    - codesign.yourdomain.com
+    - api.codesign.yourdomain.com
+    - "*.codesign.yourdomain.com"
+    secretName: codesign-global-tls
+  rules:
+  - host: codesign.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: codesign-api
+            port:
+              number: 8000
+  - host: api.codesign.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: codesign-api
+            port:
+              number: 8000
+
+---
+# Cross-Region Database Replication
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-replication-config
+  namespace: codesign-production
+  labels:
+    app: postgres
+    component: replication
+data:
+  replication.conf: |
+    # PostgreSQL Cross-Region Replication Configuration
+    
+    # Primary cluster (us-east-1)
+    primary_cluster:
+      host: postgres-primary.us-east-1.rds.amazonaws.com
+      port: 5432
+      database: codesign_db
+      username: codesign
+      max_connections: 100
+      
+    # Read replicas
+    read_replicas:
+      - name: us-west-2-replica
+        host: postgres-replica.us-west-2.rds.amazonaws.com
+        port: 5432
+        database: codesign_db
+        username: codesign
+        lag_threshold_seconds: 30
+        
+      - name: eu-west-1-replica
+        host: postgres-replica.eu-west-1.rds.amazonaws.com
+        port: 5432
+        database: codesign_db
+        username: codesign
+        lag_threshold_seconds: 60
+        
+      - name: ap-southeast-1-replica
+        host: postgres-replica.ap-southeast-1.rds.amazonaws.com
+        port: 5432
+        database: codesign_db
+        username: codesign
+        lag_threshold_seconds: 120
+    
+    # Replication settings
+    replication:
+      synchronous_commit: off
+      wal_level: replica
+      max_wal_senders: 10
+      max_replication_slots: 10
+      hot_standby: on
+      hot_standby_feedback: on
+
+---
+# Global Cache Configuration (Redis)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-global-config
+  namespace: codesign-production
+  labels:
+    app: redis
+    component: global-cache
+data:
+  redis-global.conf: |
+    # Redis Global Configuration
+    
+    # Primary cache cluster (us-east-1)
+    primary_cluster:
+      host: redis-cluster.us-east-1.cache.amazonaws.com
+      port: 6379
+      auth_token: ${REDIS_AUTH_TOKEN}
+      max_memory: 4gb
+      max_memory_policy: allkeys-lru
+      
+    # Regional cache clusters
+    regional_clusters:
+      - region: us-west-2
+        host: redis-cluster.us-west-2.cache.amazonaws.com
+        port: 6379
+        auth_token: ${REDIS_AUTH_TOKEN}
+        max_memory: 2gb
+        replication_lag_max: 100ms
+        
+      - region: eu-west-1
+        host: redis-cluster.eu-west-1.cache.amazonaws.com
+        port: 6379
+        auth_token: ${REDIS_AUTH_TOKEN}
+        max_memory: 2gb
+        replication_lag_max: 200ms
+        
+      - region: ap-southeast-1
+        host: redis-cluster.ap-southeast-1.cache.amazonaws.com
+        port: 6379
+        auth_token: ${REDIS_AUTH_TOKEN}
+        max_memory: 1gb
+        replication_lag_max: 300ms
+    
+    # Global cache strategy
+    cache_strategy:
+      write_policy: write_through
+      read_policy: read_through_with_fallback
+      ttl_default: 3600
+      ttl_max: 86400
+      compression: enabled
+      serialization: json
+
+---
+# Service Mesh Configuration (Istio)
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: codesign-global-gateway
+  namespace: codesign-production
+  labels:
+    app: codesign-playground
+    component: service-mesh
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - codesign.yourdomain.com
+    - api.codesign.yourdomain.com
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: codesign-global-tls
+    hosts:
+    - codesign.yourdomain.com
+    - api.codesign.yourdomain.com
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: codesign-global-routes
+  namespace: codesign-production
+  labels:
+    app: codesign-playground
+    component: service-mesh
+spec:
+  hosts:
+  - codesign.yourdomain.com
+  - api.codesign.yourdomain.com
+  gateways:
+  - codesign-global-gateway
+  http:
+  # Geo-based routing rules
+  - match:
+    - headers:
+        x-geo-country:
+          regex: "US|CA|MX"
+    route:
+    - destination:
+        host: codesign-api.codesign-production.svc.cluster.local
+        subset: us-east-1
+      weight: 100
+  - match:
+    - headers:
+        x-geo-country:
+          regex: "GB|DE|FR|IT|ES|NL|BE|AT|CH"
+    route:
+    - destination:
+        host: codesign-api.codesign-production.svc.cluster.local
+        subset: eu-west-1
+      weight: 100
+  - match:
+    - headers:
+        x-geo-country:
+          regex: "SG|MY|TH|ID|PH|VN"
+    route:
+    - destination:
+        host: codesign-api.codesign-production.svc.cluster.local
+        subset: ap-southeast-1
+      weight: 100
+  # Default routing
+  - route:
+    - destination:
+        host: codesign-api.codesign-production.svc.cluster.local
+        subset: us-east-1
+      weight: 60
+    - destination:
+        host: codesign-api.codesign-production.svc.cluster.local
+        subset: eu-west-1
+      weight: 30
+    - destination:
+        host: codesign-api.codesign-production.svc.cluster.local
+        subset: ap-southeast-1
+      weight: 10
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 5s
+    retries:
+      attempts: 3
+      perTryTimeout: 30s
+      retryOn: gateway-error,connect-failure,refused-stream
+    timeout: 120s
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: codesign-global-destinations
+  namespace: codesign-production
+  labels:
+    app: codesign-playground
+    component: service-mesh
+spec:
+  host: codesign-api.codesign-production.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        maxRequestsPerConnection: 2
+    circuitBreaker:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    outlierDetection:
+      consecutive5xxErrors: 5
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+  subsets:
+  - name: us-east-1
+    labels:
+      region: us-east-1
+    trafficPolicy:
+      loadBalancer:
+        simple: ROUND_ROBIN
+  - name: eu-west-1
+    labels:
+      region: eu-west-1
+    trafficPolicy:
+      loadBalancer:
+        simple: ROUND_ROBIN
+  - name: ap-southeast-1
+    labels:
+      region: ap-southeast-1
+    trafficPolicy:
+      loadBalancer:
+        simple: ROUND_ROBIN
+
+---
+# Global Monitoring and Observability
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global-monitoring-config
+  namespace: codesign-production
+  labels:
+    app: monitoring
+    component: global-observability
+data:
+  prometheus-global.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'global'
+        environment: 'production'
+        region: 'multi-region'
+    
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+    
+    scrape_configs:
+      # US East 1 cluster
+      - job_name: 'codesign-api-us-east-1'
+        kubernetes_sd_configs:
+          - role: pod
+            api_server: https://eks-cluster-us-east-1.amazonaws.com
+            namespaces:
+              names:
+                - codesign-production
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: codesign-api
+          - target_label: region
+            replacement: us-east-1
+      
+      # EU West 1 cluster
+      - job_name: 'codesign-api-eu-west-1'
+        kubernetes_sd_configs:
+          - role: pod
+            api_server: https://eks-cluster-eu-west-1.amazonaws.com
+            namespaces:
+              names:
+                - codesign-production
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: codesign-api
+          - target_label: region
+            replacement: eu-west-1
+      
+      # AP Southeast 1 cluster
+      - job_name: 'codesign-api-ap-southeast-1'
+        kubernetes_sd_configs:
+          - role: pod
+            api_server: https://eks-cluster-ap-southeast-1.amazonaws.com
+            namespaces:
+              names:
+                - codesign-production
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: codesign-api
+          - target_label: region
+            replacement: ap-southeast-1
+
+  grafana-global-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "AI Hardware Co-Design Playground - Global Overview",
+        "tags": ["production", "global", "multi-region"],
+        "panels": [
+          {
+            "title": "Global Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total[5m])) by (region)",
+                "legendFormat": "{{region}}"
+              }
+            ]
+          },
+          {
+            "title": "Regional Latency",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, region))",
+                "legendFormat": "95th percentile - {{region}}"
+              }
+            ]
+          },
+          {
+            "title": "Error Rate by Region",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) by (region) / sum(rate(http_requests_total[5m])) by (region)",
+                "legendFormat": "Error rate - {{region}}"
+              }
+            ]
+          }
+        ]
+      }
+    }

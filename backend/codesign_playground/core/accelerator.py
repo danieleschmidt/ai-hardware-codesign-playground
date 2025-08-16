@@ -12,10 +12,12 @@ import json
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-# import numpy as np  # Mock for now
+import numpy as np
 from .cache import cached, get_thread_pool
 from ..utils.monitoring import record_metric
 from ..utils.logging import get_logger
+from ..utils.exceptions import DesignError, ValidationError
+from ..utils.validation import validate_inputs, SecurityValidator
 
 logger = get_logger(__name__)
 
@@ -198,13 +200,14 @@ class AcceleratorDesigner:
         }
     
     @cached(cache_type="model", ttl=3600.0)
-    def profile_model(self, model: Any, input_shape: Tuple[int, ...]) -> ModelProfile:
+    def profile_model(self, model: Any, input_shape: Tuple[int, ...], framework: str = "auto") -> ModelProfile:
         """
         Profile a neural network model to extract computational requirements.
         
         Args:
-            model: Neural network model (mock for now)
+            model: Neural network model (supports PyTorch, TensorFlow, ONNX)
             input_shape: Input tensor shape
+            framework: ML framework ("pytorch", "tensorflow", "onnx", "auto")
             
         Returns:
             ModelProfile with computational characteristics
@@ -219,9 +222,14 @@ class AcceleratorDesigner:
             else:
                 self.design_stats["cache_misses"] += 1
         
-        # Mock profiling - in real implementation would analyze actual model
-        operations = self._estimate_operations(input_shape)
-        parameters = self._estimate_parameters(input_shape)
+        # Try real model profiling first, fall back to mock if needed
+        try:
+            operations, parameters, layer_types = self._profile_real_model(model, input_shape, framework)
+        except Exception as e:
+            logger.warning(f"Real model profiling failed, using estimates: {e}")
+            operations = self._estimate_operations(input_shape)
+            parameters = self._estimate_parameters(input_shape)
+            layer_types = ["conv2d", "dense", "activation"]
         
         # Calculate derived metrics
         peak_gflops = sum(operations.values()) / 1e9
@@ -236,7 +244,7 @@ class AcceleratorDesigner:
             parameters=parameters,
             memory_mb=memory_mb,
             compute_intensity=compute_intensity,
-            layer_types=["conv2d", "dense", "activation"],
+            layer_types=layer_types,
             model_size_mb=memory_mb,
         )
         
@@ -347,6 +355,222 @@ class AcceleratorDesigner:
             512 * 1000          # Classification layer
         )
     
+    def _profile_real_model(self, model: Any, input_shape: Tuple[int, ...], framework: str) -> Tuple[Dict[str, int], int, List[str]]:
+        """
+        Profile a real neural network model to extract computational requirements.
+        
+        Args:
+            model: Neural network model object
+            input_shape: Input tensor shape
+            framework: ML framework type
+            
+        Returns:
+            Tuple of (operations dict, parameter count, layer types)
+        """
+        operations = {}
+        parameters = 0
+        layer_types = []
+        
+        # Auto-detect framework if needed
+        if framework == "auto":
+            framework = self._detect_model_framework(model)
+        
+        if framework == "pytorch":
+            operations, parameters, layer_types = self._profile_pytorch_model(model, input_shape)
+        elif framework == "tensorflow":
+            operations, parameters, layer_types = self._profile_tensorflow_model(model, input_shape)
+        elif framework == "onnx":
+            operations, parameters, layer_types = self._profile_onnx_model(model, input_shape)
+        else:
+            raise ValueError(f"Unsupported framework: {framework}")
+        
+        return operations, parameters, layer_types
+    
+    def _detect_model_framework(self, model: Any) -> str:
+        """Detect the ML framework of a model."""
+        model_type = str(type(model))
+        
+        if "torch" in model_type.lower():
+            return "pytorch"
+        elif "tensorflow" in model_type.lower() or "keras" in model_type.lower():
+            return "tensorflow"
+        elif "onnx" in model_type.lower():
+            return "onnx"
+        elif hasattr(model, 'path') and isinstance(model.path, str):
+            # Check file extension
+            if model.path.endswith('.onnx'):
+                return "onnx"
+            elif model.path.endswith(('.pt', '.pth')):
+                return "pytorch"
+            elif model.path.endswith('.pb'):
+                return "tensorflow"
+        
+        # Default fallback
+        return "pytorch"
+    
+    def _profile_pytorch_model(self, model: Any, input_shape: Tuple[int, ...]) -> Tuple[Dict[str, int], int, List[str]]:
+        """Profile PyTorch model."""
+        try:
+            import torch
+            import torch.nn as nn
+            
+            # If model is a path, load it
+            if isinstance(model, str) or hasattr(model, 'path'):
+                model_path = getattr(model, 'path', model) if hasattr(model, 'path') else model
+                model = torch.load(model_path, map_location='cpu')
+            
+            # Ensure model is in eval mode
+            model.eval()
+            
+            operations = {"conv2d": 0, "linear": 0, "activation": 0, "pooling": 0, "normalization": 0}
+            parameters = 0
+            layer_types = []
+            
+            # Count parameters and operations
+            for name, module in model.named_modules():
+                if isinstance(module, nn.Conv2d):
+                    layer_types.append("conv2d")
+                    # Calculate FLOPS for convolution
+                    if len(input_shape) >= 4:
+                        h, w = input_shape[-2:]
+                        kernel_ops = module.kernel_size[0] * module.kernel_size[1]
+                        output_elements = h * w * module.out_channels
+                        operations["conv2d"] += kernel_ops * module.in_channels * output_elements
+                    params = sum(p.numel() for p in module.parameters())
+                    parameters += params
+                    
+                elif isinstance(module, nn.Linear):
+                    layer_types.append("linear")
+                    operations["linear"] += module.in_features * module.out_features
+                    params = sum(p.numel() for p in module.parameters())
+                    parameters += params
+                    
+                elif isinstance(module, (nn.ReLU, nn.Sigmoid, nn.Tanh, nn.GELU)):
+                    layer_types.append("activation")
+                    # Assume same size as input
+                    operations["activation"] += np.prod(input_shape)
+                    
+                elif isinstance(module, (nn.MaxPool2d, nn.AvgPool2d)):
+                    layer_types.append("pooling")
+                    operations["pooling"] += np.prod(input_shape) // 4  # Rough estimate
+                    
+                elif isinstance(module, (nn.BatchNorm2d, nn.LayerNorm)):
+                    layer_types.append("normalization")
+                    operations["normalization"] += np.prod(input_shape)
+                    params = sum(p.numel() for p in module.parameters())
+                    parameters += params
+            
+            return operations, parameters, layer_types
+            
+        except ImportError:
+            logger.warning("PyTorch not available, falling back to estimates")
+            raise
+        except Exception as e:
+            logger.error(f"PyTorch model profiling failed: {e}")
+            raise
+    
+    def _profile_tensorflow_model(self, model: Any, input_shape: Tuple[int, ...]) -> Tuple[Dict[str, int], int, List[str]]:
+        """Profile TensorFlow/Keras model."""
+        try:
+            import tensorflow as tf
+            
+            # If model is a path, load it
+            if isinstance(model, str) or hasattr(model, 'path'):
+                model_path = getattr(model, 'path', model) if hasattr(model, 'path') else model
+                model = tf.keras.models.load_model(model_path)
+            
+            operations = {"conv2d": 0, "dense": 0, "activation": 0, "pooling": 0, "normalization": 0}
+            parameters = 0
+            layer_types = []
+            
+            for layer in model.layers:
+                layer_type = type(layer).__name__.lower()
+                
+                if 'conv2d' in layer_type:
+                    layer_types.append("conv2d")
+                    if hasattr(layer, 'kernel_size') and len(input_shape) >= 4:
+                        h, w = input_shape[-2:]
+                        kernel_ops = layer.kernel_size[0] * layer.kernel_size[1]
+                        output_elements = h * w * layer.filters
+                        operations["conv2d"] += kernel_ops * layer.input_spec.axes[-1] * output_elements
+                    parameters += layer.count_params()
+                    
+                elif 'dense' in layer_type:
+                    layer_types.append("dense")
+                    if hasattr(layer, 'units'):
+                        operations["dense"] += layer.input_spec.axes[-1] * layer.units
+                    parameters += layer.count_params()
+                    
+                elif any(act in layer_type for act in ['relu', 'sigmoid', 'tanh', 'activation']):
+                    layer_types.append("activation")
+                    operations["activation"] += np.prod(input_shape)
+                    
+                elif 'pool' in layer_type:
+                    layer_types.append("pooling")
+                    operations["pooling"] += np.prod(input_shape) // 4
+                    
+                elif any(norm in layer_type for norm in ['batchnorm', 'layernorm']):
+                    layer_types.append("normalization")
+                    operations["normalization"] += np.prod(input_shape)
+                    parameters += layer.count_params()
+            
+            return operations, parameters, layer_types
+            
+        except ImportError:
+            logger.warning("TensorFlow not available, falling back to estimates")
+            raise
+        except Exception as e:
+            logger.error(f"TensorFlow model profiling failed: {e}")
+            raise
+    
+    def _profile_onnx_model(self, model: Any, input_shape: Tuple[int, ...]) -> Tuple[Dict[str, int], int, List[str]]:
+        """Profile ONNX model."""
+        try:
+            import onnx
+            
+            # If model is a path, load it
+            if isinstance(model, str) or hasattr(model, 'path'):
+                model_path = getattr(model, 'path', model) if hasattr(model, 'path') else model
+                model = onnx.load(model_path)
+            
+            operations = {"conv": 0, "matmul": 0, "add": 0, "relu": 0, "pool": 0}
+            parameters = 0
+            layer_types = []
+            
+            # Analyze ONNX graph
+            for node in model.graph.node:
+                op_type = node.op_type.lower()
+                
+                if op_type == "conv":
+                    layer_types.append("conv2d")
+                    # Rough estimate based on typical conv operations
+                    operations["conv"] += np.prod(input_shape) * 9  # 3x3 kernel estimate
+                elif op_type in ["matmul", "gemm"]:
+                    layer_types.append("dense")
+                    operations["matmul"] += np.prod(input_shape) * 1000  # Estimate
+                elif op_type == "add":
+                    operations["add"] += np.prod(input_shape)
+                elif op_type == "relu":
+                    layer_types.append("activation")
+                    operations["relu"] += np.prod(input_shape)
+                elif op_type in ["maxpool", "averagepool"]:
+                    layer_types.append("pooling")
+                    operations["pool"] += np.prod(input_shape) // 4
+            
+            # Count parameters from initializers
+            for initializer in model.graph.initializer:
+                tensor_shape = [dim.dim_value for dim in initializer.type.tensor_type.shape.dim]
+                parameters += np.prod(tensor_shape)
+            
+            return operations, parameters, layer_types
+            
+        except ImportError:
+            logger.warning("ONNX not available, falling back to estimates")
+            raise
+        except Exception as e:
+            logger.error(f"ONNX model profiling failed: {e}")
+            raise
+
     def _hash_model_and_shape(self, model: Any, input_shape: Tuple[int, ...]) -> str:
         """Generate cache key from model and input shape."""
         # Create a hash from model characteristics and input shape
