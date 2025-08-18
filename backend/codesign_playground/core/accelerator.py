@@ -16,7 +16,7 @@ import numpy as np
 from .cache import cached, get_thread_pool
 from ..utils.monitoring import record_metric
 from ..utils.logging import get_logger
-from ..utils.exceptions import DesignError, ValidationError
+from ..utils.exceptions import HardwareError, ValidationError
 from ..utils.validation import validate_inputs, SecurityValidator
 
 logger = get_logger(__name__)

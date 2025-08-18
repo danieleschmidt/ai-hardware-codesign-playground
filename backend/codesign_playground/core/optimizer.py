@@ -17,9 +17,9 @@ from .accelerator import Accelerator, ModelProfile
 from ..utils.monitoring import record_metric, monitor_function
 from ..utils.validation import validate_inputs, validate_model, SecurityValidator
 from ..utils.exceptions import OptimizationError, ValidationError
-from ..utils.circuit_breaker import CircuitBreaker, circuit_breaker
-from ..utils.enhanced_resilience import resilient_operation, RetryConfig
-from ..utils.health_monitoring import HealthMonitor
+from ..utils.circuit_breaker import AdvancedCircuitBreaker, circuit_breaker
+from ..utils.resilience import RetryConfig
+from ..utils.health_monitoring import _health_monitor as HealthMonitor
 from ..utils.logging import get_logger
 from ..utils.compliance import record_processing, DataCategory
 
@@ -103,7 +103,7 @@ class ModelOptimizer:
     @monitor_function("model_co_optimization")
     @validate_inputs
     @circuit_breaker
-    @resilient_operation(RetryConfig(max_attempts=3, base_delay=1.0))
+    # @resilient_operation(RetryConfig(max_attempts=3, base_delay=1.0))
     def co_optimize(
         self,
         target_fps: float,
