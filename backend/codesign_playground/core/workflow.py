@@ -5,7 +5,7 @@ This module provides high-level workflow orchestration for the complete
 design process from model import to hardware generation.
 """
 
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from dataclasses import dataclass, field
 from pathlib import Path
 import json
