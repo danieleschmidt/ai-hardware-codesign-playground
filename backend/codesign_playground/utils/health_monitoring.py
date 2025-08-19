@@ -6,7 +6,11 @@ failure detection for the entire platform.
 """
 
 import time
-import psutil
+# Optional dependency with fallback
+try:
+    import psutil
+except ImportError:
+    psutil = None
 import threading
 from typing import Dict, List, Any, Optional, Callable
 from dataclasses import dataclass

@@ -7,7 +7,7 @@ name = "ai-hardware-codesign-playground"
 version = "0.1.0"
 description = "Interactive environment for co-optimizing neural networks and hardware accelerators"
 readme = "README.md"
-license = {text = "MIT"}
+license = {file = "LICENSE"}
 authors = [
     {name = "Terragon Labs", email = "contact@terragon-labs.com"},
     {name = "Daniel Schmidt", email = "daniel@terragon.ai"},
@@ -212,7 +212,7 @@ analytical = "codesign_playground.simulators.analytical:AnalyticalSimulator"
 hybrid = "codesign_playground.simulators.hybrid:HybridSimulator"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["backend"]
 
 [tool.setuptools.package-data]
 "codesign_playground" = [
@@ -376,7 +376,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["src/codesign_playground"]
+source = ["backend/codesign_playground"]
 omit = [
     "*/tests/*",
     "*/test_*",
@@ -416,7 +416,7 @@ version = "0.1.0"
 version_files = [
     "pyproject.toml:version",
     "package.json:version",
-    "src/codesign_playground/__init__.py:__version__",
+    "backend/codesign_playground/__init__.py:__version__",
 ]
 style = [
     ["qmark", "fg:#ff9d00 bold"],

@@ -22,8 +22,17 @@ from enum import Enum
 from collections import deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import weakref
-import psutil
-import numpy as np
+
+# Optional dependencies with fallbacks
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 try:
     import cupy as cp
