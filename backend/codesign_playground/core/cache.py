@@ -9,8 +9,15 @@ import time
 import hashlib
 import json
 import pickle
-import redis
-import numpy as np
+try:
+    import redis
+except ImportError:
+    redis = None
+# Optional dependency with fallback
+try:
+    import numpy as np
+except ImportError:
+    np = None
 from typing import Any, Dict, List, Optional, Callable, Tuple, Union, Set
 from dataclasses import dataclass, field
 from functools import wraps
@@ -21,15 +28,26 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import weakref
 import sqlite3
-import lz4.frame
+try:
+    import lz4.frame
+except ImportError:
+    lz4 = None
 import gzip
 import zlib
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import StandardScaler
-import joblib
+try:
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.preprocessing import StandardScaler
+    import joblib
+except ImportError:
+    RandomForestRegressor = None
+    StandardScaler = None
+    joblib = None
 import io
 from contextlib import contextmanager
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 import logging
 
@@ -88,14 +106,25 @@ class MLPredictor:
     """Machine learning predictor for cache behavior."""
     
     def __init__(self):
-        self.model = RandomForestRegressor(n_estimators=50, random_state=42)
-        self.scaler = StandardScaler()
-        self.trained = False
-        self.feature_history = []
-        self.target_history = []
+        if RandomForestRegressor is None or StandardScaler is None:
+            self.model = None
+            self.scaler = None
+            self.trained = False
+            self.feature_history = []
+            self.target_history = []
+            logger.warning("sklearn not available, ML prediction disabled")
+        else:
+            self.model = RandomForestRegressor(n_estimators=50, random_state=42)
+            self.scaler = StandardScaler()
+            self.trained = False
+            self.feature_history = []
+            self.target_history = []
         
-    def extract_features(self, entry: CacheEntry) -> np.ndarray:
+    def extract_features(self, entry: CacheEntry) -> Optional[np.ndarray]:
         """Extract features from cache entry for ML prediction."""
+        if self.model is None or np is None:
+            return None
+            
         current_time = time.time()
         
         # Access pattern features
@@ -127,10 +156,14 @@ class MLPredictor:
     
     def predict_access_probability(self, entry: CacheEntry) -> float:
         """Predict probability of future access."""
-        if not self.trained or len(self.feature_history) < 10:
+        if self.model is None or not self.trained or len(self.feature_history) < 10:
             return 0.5  # Default probability
         
-        features = self.extract_features(entry).reshape(1, -1)
+        features = self.extract_features(entry)
+        if features is None:
+            return 0.5
+            
+        features = features.reshape(1, -1)
         
         try:
             normalized_features = self.scaler.transform(features)
@@ -158,6 +191,9 @@ class MLPredictor:
     
     def _retrain_model(self) -> None:
         """Retrain the ML model."""
+        if self.model is None or np is None:
+            return
+            
         try:
             X = np.array(self.feature_history)
             y = np.array(self.target_history)

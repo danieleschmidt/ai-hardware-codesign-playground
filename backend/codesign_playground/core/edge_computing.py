@@ -28,7 +28,11 @@ import logging
 import socket
 import urllib.parse
 from urllib.parse import urlparse
-import requests
+# Optional dependency with fallback
+try:
+    import requests
+except ImportError:
+    requests = None
 from pathlib import Path
 
 # Geographic and network libraries

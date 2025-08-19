@@ -8,7 +8,11 @@ for matrix multiplication operations in neural networks.
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
-import numpy as np
+# Optional dependency with fallback
+try:
+    import numpy as np
+except ImportError:
+    np = None
 import math
 
 from ..utils.logging import get_logger

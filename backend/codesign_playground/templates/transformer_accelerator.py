@@ -9,7 +9,11 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
 import math
-import numpy as np
+# Optional dependency with fallback
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 from ..utils.logging import get_logger
 

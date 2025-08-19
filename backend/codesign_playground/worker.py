@@ -5,7 +5,13 @@ This module provides Celery-based background task processing for compute-intensi
 operations like design space exploration and model optimization.
 """
 
-from celery import Celery
+# Optional dependency with fallback
+try:
+    from celery import Celery
+    CELERY_AVAILABLE = True
+except ImportError:
+    Celery = None
+    CELERY_AVAILABLE = False
 from typing import Dict, List, Any, Optional
 import json
 import time
@@ -14,24 +20,28 @@ from pathlib import Path
 from .core import AcceleratorDesigner, ModelOptimizer, DesignSpaceExplorer, Workflow
 
 # Celery configuration
-celery_app = Celery(
-    "codesign_playground_worker",
-    broker="redis://localhost:6379/0",
-    backend="redis://localhost:6379/0",
-    include=["codesign_playground.worker"]
-)
+if CELERY_AVAILABLE:
+    celery_app = Celery(
+        "codesign_playground_worker",
+        broker="redis://localhost:6379/0",
+        backend="redis://localhost:6379/0",
+        include=["codesign_playground.worker"]
+    )
+else:
+    celery_app = None
 
 # Celery settings
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-    task_track_started=True,
-    task_time_limit=30 * 60,  # 30 minutes
-    task_soft_time_limit=25 * 60,  # 25 minutes
-    worker_prefetch_multiplier=1,
+if CELERY_AVAILABLE and celery_app:
+    celery_app.conf.update(
+        task_serializer="json",
+        accept_content=["json"],
+        result_serializer="json",
+        timezone="UTC",
+        enable_utc=True,
+        task_track_started=True,
+        task_time_limit=30 * 60,  # 30 minutes
+        task_soft_time_limit=25 * 60,  # 25 minutes
+        worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
 )
 

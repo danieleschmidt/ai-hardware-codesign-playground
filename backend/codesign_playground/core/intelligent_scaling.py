@@ -14,7 +14,6 @@ import threading
 import asyncio
 import math
 import statistics
-import numpy as np
 from typing import Any, Dict, List, Optional, Callable, Tuple, Union
 from dataclasses import dataclass, field
 from enum import Enum
@@ -23,14 +22,33 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 import queue
 import json
 import pickle
-import psutil
+
+# Optional dependencies with fallbacks
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # ML and prediction libraries
-from sklearn.ensemble import RandomForestRegressor, IsolationForest, GradientBoostingRegressor
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-from sklearn.model_selection import cross_val_score
-import joblib
+try:
+    from sklearn.ensemble import RandomForestRegressor, IsolationForest, GradientBoostingRegressor
+    from sklearn.preprocessing import StandardScaler, MinMaxScaler
+    from sklearn.metrics import mean_squared_error, mean_absolute_error
+    from sklearn.model_selection import cross_val_score
+except ImportError:
+    RandomForestRegressor = IsolationForest = GradientBoostingRegressor = None
+    StandardScaler = MinMaxScaler = None
+    mean_squared_error = mean_absolute_error = cross_val_score = None
+
+try:
+    import joblib
+except ImportError:
+    joblib = None
 
 import logging
 from ..utils.monitoring import record_metric
@@ -117,8 +135,32 @@ class ResourceMetrics:
     estimated_cost_per_hour: float = 0.0
     resource_efficiency: float = 0.0
     
-    def to_feature_vector(self) -> np.ndarray:
+    def to_feature_vector(self):
         """Convert metrics to ML feature vector."""
+        if np is None:
+            # Fallback to list if numpy not available
+            return [
+                self.cpu_percent,
+                self.memory_percent,
+                self.disk_usage_percent,
+                self.load_avg_1m,
+                self.load_avg_5m,
+                self.load_avg_15m,
+                self.active_workers,
+                self.queue_size,
+                self.pending_tasks,
+                self.response_time_ms,
+                self.response_time_p95_ms,
+                self.throughput_rps,
+                self.error_rate,
+                self.concurrent_users,
+                self.requests_per_second,
+                self.cache_hit_rate,
+                self.network_in_mb_per_s,
+                self.network_out_mb_per_s,
+                self.disk_io_read_mb_per_s,
+                self.disk_io_write_mb_per_s
+            ]
         return np.array([
             self.cpu_percent,
             self.memory_percent,
@@ -223,9 +265,16 @@ class SeasonalityDetector:
         if (dt.tm_hour in self.hourly_patterns and 
             len(self.hourly_patterns[dt.tm_hour]) >= self.min_samples_for_pattern):
             
-            hourly_avg = np.mean(self.hourly_patterns[dt.tm_hour])
-            overall_avg = np.mean([v for values in self.hourly_patterns.values() 
-                                 for v in values])
+            hourly_values = self.hourly_patterns[dt.tm_hour]
+            overall_values = [v for values in self.hourly_patterns.values() for v in values]
+            
+            if np is not None:
+                hourly_avg = np.mean(hourly_values)
+                overall_avg = np.mean(overall_values)
+            else:
+                hourly_avg = sum(hourly_values) / len(hourly_values)
+                overall_avg = sum(overall_values) / len(overall_values)
+            
             if overall_avg > 0:
                 factors.append(hourly_avg / overall_avg)
         
@@ -233,15 +282,25 @@ class SeasonalityDetector:
         if (dt.tm_wday in self.daily_patterns and 
             len(self.daily_patterns[dt.tm_wday]) >= self.min_samples_for_pattern):
             
-            daily_avg = np.mean(self.daily_patterns[dt.tm_wday])
-            overall_avg = np.mean([v for values in self.daily_patterns.values() 
-                                 for v in values])
+            daily_values = self.daily_patterns[dt.tm_wday]
+            overall_values = [v for values in self.daily_patterns.values() for v in values]
+            
+            if np is not None:
+                daily_avg = np.mean(daily_values)
+                overall_avg = np.mean(overall_values)
+            else:
+                daily_avg = sum(daily_values) / len(daily_values)
+                overall_avg = sum(overall_values) / len(overall_values)
+            
             if overall_avg > 0:
                 factors.append(daily_avg / overall_avg)
         
         # Return weighted average of factors
         if factors:
-            return np.mean(factors)
+            if np is not None:
+                return np.mean(factors)
+            else:
+                return sum(factors) / len(factors)
         return 1.0
     
     def predict_pattern(self, future_timestamp: float) -> float:
@@ -250,7 +309,13 @@ class SeasonalityDetector:
         
         # Get baseline from recent data
         all_values = [v for values in self.hourly_patterns.values() for v in values]
-        baseline = np.mean(all_values) if all_values else 1.0
+        if all_values:
+            if np is not None:
+                baseline = np.mean(all_values)
+            else:
+                baseline = sum(all_values) / len(all_values)
+        else:
+            baseline = 1.0
         
         return baseline * factor
 
@@ -259,12 +324,19 @@ class AnomalyDetector:
     """Detect anomalies in system behavior."""
     
     def __init__(self):
-        self.isolation_forest = IsolationForest(
-            contamination=0.1,
-            random_state=42,
-            n_estimators=100
-        )
-        self.scaler = StandardScaler()
+        if IsolationForest is not None and StandardScaler is not None:
+            self.isolation_forest = IsolationForest(
+                contamination=0.1,
+                random_state=42,
+                n_estimators=100
+            )
+            self.scaler = StandardScaler()
+            self.ml_available = True
+        else:
+            self.isolation_forest = None
+            self.scaler = None
+            self.ml_available = False
+        
         self.trained = False
         self.training_data = []
         self.anomaly_history = deque(maxlen=1000)
@@ -284,11 +356,21 @@ class AnomalyDetector:
     
     def detect_anomaly(self, metrics: ResourceMetrics) -> Dict[str, Any]:
         """Detect if current metrics represent an anomaly."""
+        if not self.ml_available:
+            logger.warning("sklearn not available - anomaly detection disabled")
+            return {"is_anomaly": False, "confidence": 0.0, "anomaly_score": 0.0, "error": "ML libraries not available"}
+        
         if not self.trained or len(self.training_data) < 50:
             return {"is_anomaly": False, "confidence": 0.0, "anomaly_score": 0.0}
         
         try:
-            features = metrics.to_feature_vector().reshape(1, -1)
+            features = metrics.to_feature_vector()
+            if np is not None:
+                features = np.array(features).reshape(1, -1)
+            else:
+                # Fallback without numpy
+                return {"is_anomaly": False, "confidence": 0.0, "anomaly_score": 0.0, "error": "numpy not available"}
+            
             features_scaled = self.scaler.transform(features)
             
             # Get anomaly score
@@ -314,8 +396,11 @@ class AnomalyDetector:
     
     def _retrain_model(self) -> None:
         """Retrain anomaly detection model."""
+        if not self.ml_available:
+            return
+            
         try:
-            if len(self.training_data) < 50:
+            if len(self.training_data) < 50 or np is None:
                 return
             
             X = np.array(self.training_data)
@@ -344,16 +429,23 @@ class DemandPredictor:
     """Predict future resource demand using ML."""
     
     def __init__(self):
-        self.models = {
-            "short_term": GradientBoostingRegressor(n_estimators=100, random_state=42),
-            "medium_term": RandomForestRegressor(n_estimators=100, random_state=42),
-            "long_term": RandomForestRegressor(n_estimators=50, random_state=42)
-        }
-        
-        self.scalers = {
-            "features": StandardScaler(),
-            "targets": MinMaxScaler()
-        }
+        if (GradientBoostingRegressor is not None and RandomForestRegressor is not None and 
+            StandardScaler is not None and MinMaxScaler is not None):
+            self.models = {
+                "short_term": GradientBoostingRegressor(n_estimators=100, random_state=42),
+                "medium_term": RandomForestRegressor(n_estimators=100, random_state=42),
+                "long_term": RandomForestRegressor(n_estimators=50, random_state=42)
+            }
+            
+            self.scalers = {
+                "features": StandardScaler(),
+                "targets": MinMaxScaler()
+            }
+            self.ml_available = True
+        else:
+            self.models = {}
+            self.scalers = {}
+            self.ml_available = False
         
         self.training_data = []
         self.prediction_history = deque(maxlen=1000)
@@ -363,34 +455,55 @@ class DemandPredictor:
         # Feature engineering
         self.feature_windows = [5, 15, 30, 60]  # minutes
         
-    def extract_time_features(self, timestamp: float) -> np.ndarray:
+    def extract_time_features(self, timestamp: float):
         """Extract time-based features."""
         dt = time.localtime(timestamp)
         
-        # Cyclical encoding
-        hour_sin = np.sin(2 * np.pi * dt.tm_hour / 24)
-        hour_cos = np.cos(2 * np.pi * dt.tm_hour / 24)
-        
-        day_sin = np.sin(2 * np.pi * dt.tm_wday / 7)
-        day_cos = np.cos(2 * np.pi * dt.tm_wday / 7)
-        
-        month_sin = np.sin(2 * np.pi * dt.tm_mon / 12)
-        month_cos = np.cos(2 * np.pi * dt.tm_mon / 12)
+        if np is not None:
+            # Cyclical encoding
+            hour_sin = np.sin(2 * np.pi * dt.tm_hour / 24)
+            hour_cos = np.cos(2 * np.pi * dt.tm_hour / 24)
+            
+            day_sin = np.sin(2 * np.pi * dt.tm_wday / 7)
+            day_cos = np.cos(2 * np.pi * dt.tm_wday / 7)
+            
+            month_sin = np.sin(2 * np.pi * dt.tm_mon / 12)
+            month_cos = np.cos(2 * np.pi * dt.tm_mon / 12)
+        else:
+            # Fallback without numpy
+            import math
+            hour_sin = math.sin(2 * math.pi * dt.tm_hour / 24)
+            hour_cos = math.cos(2 * math.pi * dt.tm_hour / 24)
+            
+            day_sin = math.sin(2 * math.pi * dt.tm_wday / 7)
+            day_cos = math.cos(2 * math.pi * dt.tm_wday / 7)
+            
+            month_sin = math.sin(2 * math.pi * dt.tm_mon / 12)
+            month_cos = math.cos(2 * math.pi * dt.tm_mon / 12)
         
         # Additional time features
         is_weekend = float(dt.tm_wday >= 5)
         is_business_hours = float(9 <= dt.tm_hour <= 17)
         is_peak_hours = float(dt.tm_hour in [9, 10, 11, 14, 15, 16])
         
-        return np.array([
+        features = [
             hour_sin, hour_cos, day_sin, day_cos, month_sin, month_cos,
             is_weekend, is_business_hours, is_peak_hours
-        ])
+        ]
+        
+        if np is not None:
+            return np.array(features)
+        else:
+            return features
     
-    def extract_lag_features(self, current_metrics: ResourceMetrics) -> np.ndarray:
+    def extract_lag_features(self, current_metrics: ResourceMetrics):
         """Extract lagged features from historical data."""
         if len(self.training_data) < max(self.feature_windows):
-            return np.zeros(len(self.feature_windows) * 3)  # 3 metrics per window
+            zero_features = [0.0] * (len(self.feature_windows) * 3)  # 3 metrics per window
+            if np is not None:
+                return np.zeros(len(self.feature_windows) * 3)
+            else:
+                return zero_features
         
         features = []
         for window in self.feature_windows:
@@ -398,19 +511,35 @@ class DemandPredictor:
                 recent_data = self.training_data[-window:]
                 
                 # Average metrics over window
-                avg_cpu = np.mean([d["metrics"].cpu_percent for d in recent_data])
-                avg_throughput = np.mean([d["metrics"].throughput_rps for d in recent_data])
-                avg_response_time = np.mean([d["metrics"].response_time_ms for d in recent_data])
+                cpu_values = [d["metrics"].cpu_percent for d in recent_data]
+                throughput_values = [d["metrics"].throughput_rps for d in recent_data]
+                response_time_values = [d["metrics"].response_time_ms for d in recent_data]
+                
+                if np is not None:
+                    avg_cpu = np.mean(cpu_values)
+                    avg_throughput = np.mean(throughput_values)
+                    avg_response_time = np.mean(response_time_values)
+                else:
+                    avg_cpu = sum(cpu_values) / len(cpu_values)
+                    avg_throughput = sum(throughput_values) / len(throughput_values)
+                    avg_response_time = sum(response_time_values) / len(response_time_values)
                 
                 features.extend([avg_cpu, avg_throughput, avg_response_time])
             else:
                 features.extend([0.0, 0.0, 0.0])
         
-        return np.array(features)
+        if np is not None:
+            return np.array(features)
+        else:
+            return features
     
     def predict_demand(self, current_metrics: ResourceMetrics, 
                       horizon_minutes: int = 15) -> Dict[str, float]:
         """Predict future demand at different time horizons."""
+        if not self.ml_available:
+            logger.warning("sklearn not available - using fallback prediction")
+            return self._fallback_prediction(current_metrics, horizon_minutes)
+            
         predictions = {}
         
         # Determine which model to use based on horizon
@@ -421,7 +550,7 @@ class DemandPredictor:
         else:
             model_key = "long_term"
         
-        if not self.models_trained[model_key]:
+        if not self.models_trained.get(model_key, False):
             # Fallback to simple prediction
             return self._fallback_prediction(current_metrics, horizon_minutes)
         
@@ -431,7 +560,11 @@ class DemandPredictor:
             time_features = self.extract_time_features(current_metrics.timestamp + horizon_minutes * 60)
             lag_features = self.extract_lag_features(current_metrics)
             
-            features = np.concatenate([metric_features, time_features, lag_features]).reshape(1, -1)
+            if np is not None:
+                features = np.concatenate([metric_features, time_features, lag_features]).reshape(1, -1)
+            else:
+                # Fallback without numpy
+                return self._fallback_prediction(current_metrics, horizon_minutes)
             
             # Scale features
             features_scaled = self.scalers["features"].transform(features)
@@ -468,7 +601,18 @@ class DemandPredictor:
         # Simple trend estimation
         if len(self.training_data) >= 10:
             recent_throughputs = [d["metrics"].throughput_rps for d in self.training_data[-10:]]
-            trend = np.polyfit(range(len(recent_throughputs)), recent_throughputs, 1)[0]
+            if np is not None:
+                trend = np.polyfit(range(len(recent_throughputs)), recent_throughputs, 1)[0]
+            else:
+                # Fallback linear trend calculation without numpy
+                x_values = list(range(len(recent_throughputs)))
+                n = len(x_values)
+                sum_x = sum(x_values)
+                sum_y = sum(recent_throughputs)
+                sum_xy = sum(x * y for x, y in zip(x_values, recent_throughputs))
+                sum_x2 = sum(x * x for x in x_values)
+                trend = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x) if (n * sum_x2 - sum_x * sum_x) != 0 else 0
+            
             predicted_throughput = base_throughput + (trend * horizon_minutes)
         else:
             predicted_throughput = base_throughput
@@ -497,6 +641,9 @@ class DemandPredictor:
     
     def _retrain_models(self) -> None:
         """Retrain all prediction models."""
+        if not self.ml_available or np is None:
+            return
+            
         try:
             if len(self.training_data) < 100:
                 return
@@ -520,9 +667,13 @@ class DemandPredictor:
                 for window in self.feature_windows:
                     if i >= window:
                         window_data = self.training_data[i-window:i]
-                        avg_cpu = np.mean([d["metrics"].cpu_percent for d in window_data])
-                        avg_throughput = np.mean([d["metrics"].throughput_rps for d in window_data])
-                        avg_response_time = np.mean([d["metrics"].response_time_ms for d in window_data])
+                        cpu_values = [d["metrics"].cpu_percent for d in window_data]
+                        throughput_values = [d["metrics"].throughput_rps for d in window_data]
+                        response_time_values = [d["metrics"].response_time_ms for d in window_data]
+                        
+                        avg_cpu = np.mean(cpu_values)
+                        avg_throughput = np.mean(throughput_values)
+                        avg_response_time = np.mean(response_time_values)
                         lag_features.extend([avg_cpu, avg_throughput, avg_response_time])
                     else:
                         lag_features.extend([0.0, 0.0, 0.0])
@@ -553,8 +704,11 @@ class DemandPredictor:
                 self.models_trained[model_key] = True
                 
                 # Evaluate model
-                cv_scores = cross_val_score(model, X_scaled, y_scaled, cv=3, scoring='neg_mean_squared_error')
-                logger.info(f"Retrained {model_key} model. CV RMSE: {np.sqrt(-cv_scores.mean()):.3f}")
+                if cross_val_score is not None:
+                    cv_scores = cross_val_score(model, X_scaled, y_scaled, cv=3, scoring='neg_mean_squared_error')
+                    logger.info(f"Retrained {model_key} model. CV RMSE: {np.sqrt(-cv_scores.mean()):.3f}")
+                else:
+                    logger.info(f"Retrained {model_key} model")
             
             self.last_training = time.time()
             
@@ -582,10 +736,19 @@ class DemandPredictor:
                         errors.append(error)
                 
                 if errors:
+                    if np is not None:
+                        mae = np.mean(errors)
+                        rmse = np.sqrt(np.mean([e**2 for e in errors]))
+                        accuracy = 1.0 - np.mean(errors)
+                    else:
+                        mae = sum(errors) / len(errors)
+                        rmse = (sum([e**2 for e in errors]) / len(errors)) ** 0.5
+                        accuracy = 1.0 - (sum(errors) / len(errors))
+                    
                     accuracies[f"{horizon}min"] = {
-                        "mae": np.mean(errors),
-                        "rmse": np.sqrt(np.mean([e**2 for e in errors])),
-                        "accuracy": 1.0 - np.mean(errors)
+                        "mae": mae,
+                        "rmse": rmse,
+                        "accuracy": accuracy
                     }
         
         return accuracies
@@ -699,31 +862,35 @@ class IntelligentScaler:
         start_time = time.time()
         
         try:
-            # System metrics
-            cpu_percent = psutil.cpu_percent(interval=1)
-            cpu_count = psutil.cpu_count()
-            
-            memory = psutil.virtual_memory()
-            memory_percent = memory.percent
-            memory_total_gb = memory.total / (1024**3)
-            memory_available_gb = memory.available / (1024**3)
-            
-            disk = psutil.disk_usage('/')
-            disk_usage_percent = disk.percent
-            
-            # Network and I/O
-            net_io = psutil.net_io_counters()
-            disk_io = psutil.disk_io_counters()
-            
-            # Load average
-            load_avg = psutil.getloadavg()
-            
-            # Process info
-            process_count = len(psutil.pids())
-            
-            # Connection counts
-            tcp_connections = len([conn for conn in psutil.net_connections() if conn.type == 1])  # TCP
-            udp_connections = len([conn for conn in psutil.net_connections() if conn.type == 2])  # UDP
+            if psutil is not None:
+                # System metrics
+                cpu_percent = psutil.cpu_percent(interval=1)
+                cpu_count = psutil.cpu_count()
+                
+                memory = psutil.virtual_memory()
+                memory_percent = memory.percent
+                memory_total_gb = memory.total / (1024**3)
+                memory_available_gb = memory.available / (1024**3)
+                
+                disk = psutil.disk_usage('/')
+                disk_usage_percent = disk.percent
+                
+                # Network and I/O
+                net_io = psutil.net_io_counters()
+                disk_io = psutil.disk_io_counters()
+                
+                # Load average
+                load_avg = psutil.getloadavg()
+                
+                # Process info
+                process_count = len(psutil.pids())
+                
+                # Connection counts
+                tcp_connections = len([conn for conn in psutil.net_connections() if conn.type == 1])  # TCP
+                udp_connections = len([conn for conn in psutil.net_connections() if conn.type == 2])  # UDP
+            else:
+                logger.warning("psutil not available - using fallback metrics")
+                raise ImportError("psutil not available")
             
         except Exception as e:
             logger.warning(f"Failed to collect system metrics: {e}")
@@ -778,29 +945,73 @@ class IntelligentScaler:
         """Collect application-specific metrics."""
         # This would integrate with your application's metrics
         # For now, return mock data
+        if np is not None:
+            # Use numpy for random generation
+            queue_size = max(0, int(np.random.normal(10, 5)))
+            pending_tasks = max(0, int(np.random.normal(5, 3)))
+            completed_tasks = max(0, int(np.random.normal(50, 15)))
+            failed_tasks = max(0, int(np.random.normal(2, 1)))
+            
+            response_time = max(10, np.random.normal(200, 50))
+            response_time_p50 = max(10, np.random.normal(150, 30))
+            response_time_p95 = max(50, np.random.normal(400, 100))
+            response_time_p99 = max(100, np.random.normal(800, 200))
+            throughput = max(0, np.random.normal(20, 5))
+            error_rate = max(0, min(1, np.random.normal(0.02, 0.01)))
+            success_rate = max(0, min(1, 1 - np.random.normal(0.02, 0.01)))
+            
+            concurrent_users = max(0, int(np.random.normal(100, 30)))
+            requests_per_second = max(0, np.random.normal(25, 8))
+            cache_hit_rate = max(0, min(1, np.random.normal(0.85, 0.1)))
+            database_connections = max(0, int(np.random.normal(20, 5)))
+            active_sessions = max(0, int(np.random.normal(80, 20)))
+            resource_efficiency = min(1.0, max(0.0, np.random.normal(0.75, 0.1)))
+        else:
+            # Fallback using built-in random
+            import random
+            queue_size = max(0, int(random.gauss(10, 5)))
+            pending_tasks = max(0, int(random.gauss(5, 3)))
+            completed_tasks = max(0, int(random.gauss(50, 15)))
+            failed_tasks = max(0, int(random.gauss(2, 1)))
+            
+            response_time = max(10, random.gauss(200, 50))
+            response_time_p50 = max(10, random.gauss(150, 30))
+            response_time_p95 = max(50, random.gauss(400, 100))
+            response_time_p99 = max(100, random.gauss(800, 200))
+            throughput = max(0, random.gauss(20, 5))
+            error_rate = max(0, min(1, random.gauss(0.02, 0.01)))
+            success_rate = max(0, min(1, 1 - random.gauss(0.02, 0.01)))
+            
+            concurrent_users = max(0, int(random.gauss(100, 30)))
+            requests_per_second = max(0, random.gauss(25, 8))
+            cache_hit_rate = max(0, min(1, random.gauss(0.85, 0.1)))
+            database_connections = max(0, int(random.gauss(20, 5)))
+            active_sessions = max(0, int(random.gauss(80, 20)))
+            resource_efficiency = min(1.0, max(0.0, random.gauss(0.75, 0.1)))
+        
         return {
             "active_workers": self.current_capacity,
-            "queue_size": max(0, int(np.random.normal(10, 5))),
-            "pending_tasks": max(0, int(np.random.normal(5, 3))),
-            "completed_tasks_per_minute": max(0, int(np.random.normal(50, 15))),
-            "failed_tasks_per_minute": max(0, int(np.random.normal(2, 1))),
+            "queue_size": queue_size,
+            "pending_tasks": pending_tasks,
+            "completed_tasks_per_minute": completed_tasks,
+            "failed_tasks_per_minute": failed_tasks,
             
-            "response_time_ms": max(10, np.random.normal(200, 50)),
-            "response_time_p50_ms": max(10, np.random.normal(150, 30)),
-            "response_time_p95_ms": max(50, np.random.normal(400, 100)),
-            "response_time_p99_ms": max(100, np.random.normal(800, 200)),
-            "throughput_rps": max(0, np.random.normal(20, 5)),
-            "error_rate": max(0, min(1, np.random.normal(0.02, 0.01))),
-            "success_rate": max(0, min(1, 1 - np.random.normal(0.02, 0.01))),
+            "response_time_ms": response_time,
+            "response_time_p50_ms": response_time_p50,
+            "response_time_p95_ms": response_time_p95,
+            "response_time_p99_ms": response_time_p99,
+            "throughput_rps": throughput,
+            "error_rate": error_rate,
+            "success_rate": success_rate,
             
-            "concurrent_users": max(0, int(np.random.normal(100, 30))),
-            "requests_per_second": max(0, np.random.normal(25, 8)),
-            "cache_hit_rate": max(0, min(1, np.random.normal(0.85, 0.1))),
-            "database_connections": max(0, int(np.random.normal(20, 5))),
-            "active_sessions": max(0, int(np.random.normal(80, 20))),
+            "concurrent_users": concurrent_users,
+            "requests_per_second": requests_per_second,
+            "cache_hit_rate": cache_hit_rate,
+            "database_connections": database_connections,
+            "active_sessions": active_sessions,
             
             "estimated_cost_per_hour": self.current_capacity * self.cost_per_unit_per_hour,
-            "resource_efficiency": min(1.0, max(0.0, np.random.normal(0.75, 0.1)))
+            "resource_efficiency": resource_efficiency
         }
     
     def _should_make_scaling_decision(self) -> bool:
@@ -917,7 +1128,13 @@ class IntelligentScaler:
                 reasoning = ["Mixed signals - maintaining current capacity"]
         
         # Calculate confidence
-        confidence = np.mean(confidence_factors) if confidence_factors else 0.5
+        if confidence_factors:
+            if np is not None:
+                confidence = np.mean(confidence_factors)
+            else:
+                confidence = sum(confidence_factors) / len(confidence_factors)
+        else:
+            confidence = 0.5
         
         # Cost impact analysis
         capacity_change = target_capacity - self.current_capacity
@@ -968,7 +1185,10 @@ class IntelligentScaler:
             cpu_score = max(0.0, 1.0 - (metrics.cpu_percent - 80) / 20)
         scores.append(cpu_score)
         
-        return np.mean(scores)
+        if np is not None:
+            return np.mean(scores)
+        else:
+            return sum(scores) / len(scores)
     
     def _calculate_resource_utilization(self, metrics: ResourceMetrics) -> float:
         """Calculate overall resource utilization (0-1)."""
@@ -977,7 +1197,10 @@ class IntelligentScaler:
             metrics.memory_percent / 100,
             min(1.0, metrics.load_avg_1m / metrics.cpu_count) if metrics.cpu_count > 0 else 0
         ]
-        return np.mean(utilizations)
+        if np is not None:
+            return np.mean(utilizations)
+        else:
+            return sum(utilizations) / len(utilizations)
     
     def _calculate_target_capacity(self, metrics: ResourceMetrics, 
                                  predicted_demand: float, direction: str) -> int:
@@ -1053,10 +1276,21 @@ class IntelligentScaler:
             return {"error": "No metrics available"}
         
         # Calculate averages
-        avg_cpu = np.mean([m.cpu_percent for m in recent_metrics])
-        avg_memory = np.mean([m.memory_percent for m in recent_metrics])
-        avg_response_time = np.mean([m.response_time_ms for m in recent_metrics])
-        avg_throughput = np.mean([m.throughput_rps for m in recent_metrics])
+        cpu_values = [m.cpu_percent for m in recent_metrics]
+        memory_values = [m.memory_percent for m in recent_metrics]
+        response_time_values = [m.response_time_ms for m in recent_metrics]
+        throughput_values = [m.throughput_rps for m in recent_metrics]
+        
+        if np is not None:
+            avg_cpu = np.mean(cpu_values)
+            avg_memory = np.mean(memory_values)
+            avg_response_time = np.mean(response_time_values)
+            avg_throughput = np.mean(throughput_values)
+        else:
+            avg_cpu = sum(cpu_values) / len(cpu_values)
+            avg_memory = sum(memory_values) / len(memory_values)
+            avg_response_time = sum(response_time_values) / len(response_time_values)
+            avg_throughput = sum(throughput_values) / len(throughput_values)
         
         # Scaling statistics
         scale_up_count = sum(1 for s in recent_scaling if s["decision"].direction == ScalingDirection.SCALE_UP)
@@ -1154,7 +1388,7 @@ class IntelligentScaler:
             "summary": {
                 "peak_capacity": peak_capacity,
                 "total_estimated_cost": total_cost,
-                "avg_capacity": np.mean([f["required_capacity"] for f in forecasts])
+                "avg_capacity": (sum([f["required_capacity"] for f in forecasts]) / len(forecasts)) if forecasts else 0
             }
         }
     

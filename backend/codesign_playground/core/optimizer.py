@@ -19,7 +19,7 @@ from ..utils.validation import validate_inputs, validate_model, SecurityValidato
 from ..utils.exceptions import OptimizationError, ValidationError
 from ..utils.circuit_breaker import AdvancedCircuitBreaker, circuit_breaker
 from ..utils.resilience import RetryConfig
-from ..utils.health_monitoring import _health_monitor as HealthMonitor
+from ..utils.health_monitoring import get_health_monitor
 from ..utils.logging import get_logger
 from ..utils.compliance import record_processing, DataCategory
 
@@ -65,8 +65,8 @@ class ModelOptimizer:
         
         # Robustness components
         self.logger = get_logger(__name__)
-        self.health_monitor = HealthMonitor("model_optimizer")
-        self.circuit_breaker = CircuitBreaker(
+        self.health_monitor = get_health_monitor()
+        self.circuit_breaker = AdvancedCircuitBreaker(
             failure_threshold=5,
             recovery_timeout=30,
             expected_exception=OptimizationError

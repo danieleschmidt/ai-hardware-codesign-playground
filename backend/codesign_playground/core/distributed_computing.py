@@ -24,7 +24,11 @@ from collections import deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import queue
 import socket
-import requests
+# Optional dependency with fallback
+try:
+    import requests
+except ImportError:
+    requests = None
 from urllib.parse import urljoin
 import logging
 

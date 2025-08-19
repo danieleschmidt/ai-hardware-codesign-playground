@@ -12,7 +12,11 @@ import json
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import numpy as np
+# Optional dependency with fallback
+try:
+    import numpy as np
+except ImportError:
+    np = None
 from .cache import cached, get_thread_pool
 from ..utils.monitoring import record_metric
 from ..utils.logging import get_logger
@@ -145,17 +149,17 @@ endmodule
     
     def estimate_performance(self) -> Dict[str, float]:
         """Estimate accelerator performance metrics."""
-        # Simple performance model
+        # Simple performance model with error handling
         throughput_ops_s = self.compute_units * self.frequency_mhz * 1e6
         latency_cycles = 100  # Basic estimate
-        power_w = self.compute_units * 0.1 + 1.0  # Base power model
+        power_w = max(self.compute_units * 0.1 + 1.0, 0.1)  # Ensure non-zero power
         
         performance = {
             "throughput_ops_s": throughput_ops_s,
             "latency_cycles": latency_cycles,
-            "latency_ms": latency_cycles / (self.frequency_mhz * 1000),
+            "latency_ms": latency_cycles / (self.frequency_mhz * 1000) if self.frequency_mhz > 0 else 0,
             "power_w": power_w,
-            "efficiency_ops_w": throughput_ops_s / power_w,
+            "efficiency_ops_w": throughput_ops_s / power_w if power_w > 0 else 0,
             "area_mm2": self.compute_units * 0.1 + 2.0,  # Estimate
         }
         
@@ -189,6 +193,20 @@ class AcceleratorDesigner:
         
         # Performance optimization using shared thread pool
         self._cache = {}
+    
+    def validate_design_parameters(self, compute_units: int, memory_hierarchy: List[str], dataflow: str) -> None:
+        """Validate design parameters before creating accelerator."""
+        if compute_units <= 0:
+            raise ValueError(f"Compute units must be positive, got {compute_units}")
+        
+        if compute_units > 1024:
+            raise ValueError(f"Compute units cannot exceed 1024, got {compute_units}")
+            
+        if dataflow not in self.dataflow_options:
+            raise ValueError(f"Unsupported dataflow: {dataflow}. Supported: {self.dataflow_options}")
+            
+        if not memory_hierarchy or not isinstance(memory_hierarchy, list):
+            raise ValueError("Memory hierarchy must be a non-empty list")
         self._cache_lock = threading.RLock()
         
         # Design optimization statistics
@@ -278,8 +296,7 @@ class AcceleratorDesigner:
             memory_hierarchy = ["sram_64kb", "dram"]
         
         # Validate parameters
-        if dataflow not in self.dataflow_options:
-            raise ValueError(f"Unsupported dataflow: {dataflow}")
+        self.validate_design_parameters(compute_units, memory_hierarchy, dataflow)
         
         accelerator = Accelerator(
             compute_units=compute_units,

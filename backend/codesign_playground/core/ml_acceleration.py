@@ -23,7 +23,11 @@ import json
 import hashlib
 import pickle
 from pathlib import Path
-import numpy as np
+# Optional dependency with fallback
+try:
+    import numpy as np
+except ImportError:
+    np = None
 from datetime import datetime, timedelta
 
 try:
