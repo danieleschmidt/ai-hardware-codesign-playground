@@ -120,7 +120,7 @@ class MLPredictor:
             self.feature_history = []
             self.target_history = []
         
-    def extract_features(self, entry: CacheEntry) -> Optional[np.ndarray]:
+    def extract_features(self, entry: CacheEntry) -> Optional[Any]:
         """Extract features from cache entry for ML prediction."""
         if self.model is None or np is None:
             return None

@@ -193,6 +193,15 @@ class AcceleratorDesigner:
         
         # Performance optimization using shared thread pool
         self._cache = {}
+        self._cache_lock = threading.RLock()
+        
+        # Statistics tracking
+        self.design_stats = {
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "parallel_designs": 0,
+            "total_designs": 0
+        }
     
     def validate_design_parameters(self, compute_units: int, memory_hierarchy: List[str], dataflow: str) -> None:
         """Validate design parameters before creating accelerator."""
