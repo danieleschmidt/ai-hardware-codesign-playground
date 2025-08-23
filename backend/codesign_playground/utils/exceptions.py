@@ -98,6 +98,16 @@ class HardwareError(CodesignError):
         })
 
 
+class PerformanceError(CodesignError):
+    """Performance optimization related errors."""
+    pass
+
+
+class ScalingError(CodesignError):
+    """Auto-scaling related errors."""
+    pass
+
+
 class OptimizationError(CodesignError):
     """Raised when optimization processes fail."""
     

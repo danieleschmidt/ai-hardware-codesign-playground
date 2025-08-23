@@ -9,7 +9,10 @@ from typing import Any, Dict, List, Optional, Union, Tuple, Callable
 import re
 from pathlib import Path
 import json
-import yaml
+try:
+    import yaml
+except ImportError:
+    from .fallback_imports import yaml
 import hashlib
 import time
 from dataclasses import dataclass, field

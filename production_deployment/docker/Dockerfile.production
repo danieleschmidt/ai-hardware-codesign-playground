@@ -1,0 +1,44 @@
+# Production Dockerfile for AI Hardware Co-Design Platform
+FROM python:3.11-slim as base
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    ENVIRONMENT=production
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        libc6-dev \
+        libffi-dev \
+        libssl-dev \
+        curl \
+        netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create application user
+RUN useradd --create-home --shell /bin/bash codesign
+USER codesign
+WORKDIR /app
+
+# Install Python dependencies
+COPY --chown=codesign:codesign requirements.txt /app/
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Copy application code
+COPY --chown=codesign:codesign backend/ /app/backend/
+COPY --chown=codesign:codesign scripts/ /app/scripts/
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Expose port
+EXPOSE 8000
+
+# Start application
+CMD ["python", "-m", "uvicorn", "backend.codesign_playground.server:app", \
+     "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

@@ -1,0 +1,29 @@
+{
+  "prometheus": {
+    "prometheusSpec": {
+      "retention": "30d",
+      "storageSpec": {
+        "volumeClaimTemplate": {
+          "spec": {
+            "storageClassName": "fast-ssd",
+            "accessModes": [
+              "ReadWriteOnce"
+            ],
+            "resources": {
+              "requests": {
+                "storage": "50Gi"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "grafana": {
+    "enabled": true,
+    "adminPassword": "MhMgJm0tOrZ8GqHpFAIi0KgY"
+  },
+  "alertmanager": {
+    "enabled": true
+  }
+}

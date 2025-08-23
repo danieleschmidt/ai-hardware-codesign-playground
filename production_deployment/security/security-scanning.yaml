@@ -1,0 +1,23 @@
+{
+  "security_scanning": {
+    "enabled": true,
+    "schedule": "0 2 * * *",
+    "tools": {
+      "container_scanning": {
+        "tool": "trivy",
+        "fail_on": [
+          "CRITICAL",
+          "HIGH"
+        ]
+      },
+      "dependency_scanning": {
+        "tool": "safety",
+        "database_update": true
+      },
+      "secrets_scanning": {
+        "tool": "trufflehog",
+        "entropy_threshold": 6.0
+      }
+    }
+  }
+}

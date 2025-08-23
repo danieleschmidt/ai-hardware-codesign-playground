@@ -12,12 +12,12 @@ import json
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-# Optional dependency with fallback
 try:
     import numpy as np
 except ImportError:
-    np = None
+    from ..utils.fallback_imports import np
 from .cache import cached, get_thread_pool
+from .performance_optimizer import get_performance_orchestrator, optimized_execution
 from ..utils.monitoring import record_metric
 from ..utils.logging import get_logger
 from ..utils.exceptions import HardwareError, ValidationError
@@ -227,6 +227,7 @@ class AcceleratorDesigner:
         }
     
     @cached(cache_type="model", ttl=3600.0)
+    @optimized_execution(cache_enabled=True, estimated_duration=2.0)
     def profile_model(self, model: Any, input_shape: Tuple[int, ...], framework: str = "auto") -> ModelProfile:
         """
         Profile a neural network model to extract computational requirements.
@@ -282,6 +283,7 @@ class AcceleratorDesigner:
         return profile
     
     @cached(cache_type="accelerator", ttl=1800.0)
+    @optimized_execution(cache_enabled=True, estimated_duration=1.0)
     def design(
         self,
         compute_units: int = 64,

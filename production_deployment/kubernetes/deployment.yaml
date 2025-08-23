@@ -1,0 +1,106 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "codesign-app",
+    "namespace": "codesign-production",
+    "labels": {
+      "app": "codesign-app"
+    }
+  },
+  "spec": {
+    "replicas": 3,
+    "selector": {
+      "matchLabels": {
+        "app": "codesign-app"
+      }
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "codesign-app"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "codesign-app",
+            "image": "codesign-playground:latest",
+            "ports": [
+              {
+                "containerPort": 8000
+              }
+            ],
+            "env": [
+              {
+                "name": "DATABASE_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "codesign-secrets",
+                    "key": "database-password"
+                  }
+                }
+              },
+              {
+                "name": "REDIS_PASSWORD",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "codesign-secrets",
+                    "key": "redis-password"
+                  }
+                }
+              },
+              {
+                "name": "SECRET_KEY",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "name": "codesign-secrets",
+                    "key": "secret-key"
+                  }
+                }
+              }
+            ],
+            "envFrom": [
+              {
+                "configMapRef": {
+                  "name": "codesign-config"
+                }
+              }
+            ],
+            "resources": {
+              "requests": {
+                "cpu": "1000m",
+                "memory": "2Gi"
+              },
+              "limits": {
+                "cpu": "2000m",
+                "memory": "4Gi"
+              }
+            },
+            "livenessProbe": {
+              "httpGet": {
+                "path": "/health",
+                "port": 8000
+              },
+              "initialDelaySeconds": 30,
+              "periodSeconds": 10
+            },
+            "readinessProbe": {
+              "httpGet": {
+                "path": "/ready",
+                "port": 8000
+              },
+              "initialDelaySeconds": 5,
+              "periodSeconds": 5
+            }
+          }
+        ],
+        "imagePullSecrets": [
+          {
+            "name": "regcred"
+          }
+        ]
+      }
+    }
+  }
+}
