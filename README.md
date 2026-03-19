@@ -1,391 +1,146 @@
-# 🚀 AI Hardware Co-Design Platform - Quantum Leap Edition
+# AI Hardware Co-Design Playground
 
-**Advanced AI Hardware Co-Design with Breakthrough Research Capabilities**
+A simulator that models how neural network architecture choices affect hardware performance.
+Use it to find Pareto-optimal (accuracy, latency, energy) design points across hardware targets.
 
-[![Production Ready](https://img.shields.io/badge/Production-Ready-brightgreen)](https://github.com/your-org/ai-hardware-codesign)
-[![Quality Gates](https://img.shields.io/badge/Quality%20Gates-4%2F5%20Passed-green)](./DEPLOYMENT_GUIDE.md)
-[![Performance](https://img.shields.io/badge/Performance-19.20%20GOPS-blue)](./RESEARCH_BREAKTHROUGH_REPORT.md)
-[![Languages](https://img.shields.io/badge/Languages-13%20Supported-orange)](./backend/codesign_playground/global/internationalization.py)
-[![Compliance](https://img.shields.io/badge/Compliance-GDPR%2FCCPA%2FPDPA-purple)](./backend/codesign_playground/global/compliance.py)
+## What It Does
 
-A comprehensive platform for co-designing AI models and hardware accelerators with **quantum leap optimizations**, breakthrough research algorithms, and global deployment capabilities.
+Neural network deployment is a joint optimization problem: the same architecture behaves
+very differently on a cloud GPU, an edge TPU, and a microcontroller. This simulator models
+that relationship using the **roofline model** — a principled way to reason about whether
+each layer is compute-bound or memory-bandwidth-bound on a given chip.
 
----
+```
+┌─────────────────┐     ┌─────────────────┐     ┌──────────────────────┐
+│  NNArchitecture │────▶│PerformanceEstim.│────▶│   PerformanceResult  │
+│  - layers       │     │  roofline model │     │  - latency_ms        │
+│  - FLOPs        │     │  hw_efficiency  │     │  - energy_mj         │
+│  - params       │     │  overhead_fac.  │     │  - throughput_fps    │
+└─────────────────┘     └────────┬────────┘     │  - compute/mem split │
+                                 │               └──────────────────────┘
+┌─────────────────┐              │
+│  HardwareSpec   │──────────────┘
+│  - peak_tflops  │
+│  - mem_bw_gbps  │     ┌─────────────────┐     ┌──────────────────────┐
+│  - sram_bytes   │     │CoDesignOptimizer│────▶│  Pareto Front        │
+│  - power_watts  │     │  grid search    │     │  (accuracy proxy,    │
+│  - ridge_point  │     │  Pareto filter  │     │   latency, energy)   │
+└─────────────────┘     └─────────────────┘     └──────────────────────┘
+```
 
-## 🎯 Key Achievements
+## Roofline Model
 
-✅ **19.20 GOPS** computational throughput (1920% of target)  
-✅ **8 Novel Algorithms** with breakthrough research validation  
-✅ **100x+ Scale Factor** potential with quantum leap optimizations  
-✅ **13 Languages** supported with comprehensive i18n  
-✅ **Global Compliance** ready (GDPR, CCPA, PDPA)  
-✅ **80% Quality Gates** passed - production deployment ready  
+A layer's **arithmetic intensity** (AI) determines its performance ceiling:
 
----
+```
+AI = FLOPs / bytes_of_memory_traffic
 
-## 🚀 Quick Start
+attainable_perf = min(peak_flops, mem_bandwidth × AI)
 
-### 1. Installation
+                    │ Compute roof (flat line)
+ Attainable FLOP/s  │──────────────────────────
+                    │           /
+                    │          / ← memory roof (slope = bandwidth)
+                    │         /
+                    │        /
+                    └────────┴──────────────────
+                          ridge point       AI (FLOP/byte)
+```
+
+Layers to the left of the ridge point are **memory-bound** — throwing more compute cores
+won't help. Layers to the right are **compute-bound** — you need faster arithmetic units.
+
+## Modules
+
+| Module | Purpose |
+|--------|---------|
+| `codesign/architecture.py` | `NNArchitecture`, `Layer`, `LayerType` — represents networks with precise FLOP/weight counts |
+| `codesign/hardware.py` | `HardwareSpec` — models a hardware target; includes pre-built `cloud_gpu()`, `edge_tpu()`, `mcu()` profiles |
+| `codesign/estimator.py` | `PerformanceEstimator` — roofline-based latency/energy/memory estimator |
+| `codesign/optimizer.py` | `CoDesignOptimizer` — Pareto-optimal search over architecture × hardware space |
+| `codesign/roofline.py` | `RooflineAnalyzer` — per-layer roofline analysis with ASCII chart and matplotlib plot |
+
+## Quick Start
+
 ```bash
-# Clone repository
-git clone <repository-url>
-cd ai-hardware-codesign-platform
+# Run the co-design demo (no extra deps needed)
+python3 demo.py
 
-# Setup environment (Python 3.8+)
-python3 -m venv venv
-source venv/bin/activate
-
-# Optional: Install enhanced dependencies
-pip install numpy scipy pandas matplotlib plotly scikit-learn
+# Run tests
+python3 -m pytest tests/ -v
 ```
 
-### 2. Basic Usage
+Requires Python 3.9+ and numpy. Matplotlib is optional (roofline plots).
+
+## Demo: MobileNet Co-Design Across 3 Targets
+
+```
+Hardware: Cloud GPU (A100-80G)    312 TFLOP/s   2000 GB/s  ridge=156 FLOP/byte
+Hardware: Edge TPU (Coral)          4 TOPS        26 GB/s   ridge=156 FLOP/byte
+Hardware: MCU (Cortex-M7)         896 MFLOP/s    0.4 GB/s  ridge=  2 FLOP/byte
+
+MobileNet-1.0 on each:
+  Cloud GPU → 0.06 ms, 23 mJ   (all layers memory-bound — GPU vastly overpowered)
+  Edge TPU  → 5.0 ms,  9 mJ   (all layers memory-bound at 8-bit precision)
+  MCU       → 2831 ms, 721 mJ  (78% compute-bound — very compute-limited)
+```
+
+The optimizer searches 20 architecture variants × 3 hardware targets = 60 design points
+and returns the Pareto-optimal subset: designs where no other point beats them on all
+three objectives simultaneously (accuracy proxy, latency, energy).
+
+## Extending
+
+**Add a new hardware target:**
 ```python
-from backend.codesign_playground.core.accelerator import Accelerator
-from backend.codesign_playground.core.optimizer import ModelOptimizer
+from codesign.hardware import HardwareSpec
 
-# Create high-performance accelerator
-accelerator = Accelerator(
-    compute_units=64,
-    memory_hierarchy={'L1': 32, 'L2': 256, 'L3': 2048},
-    dataflow='weight_stationary',
-    frequency_mhz=300,
-    precision='int8'
+jetson = HardwareSpec(
+    name="Jetson Orin (INT8)",
+    peak_tflops=275.0,
+    mem_bandwidth_gbps=204.8,
+    sram_bytes=64 * 1024**2,
+    power_watts=60.0,
+    dtype_bytes=1,
 )
-
-# Estimate performance
-perf = accelerator.estimate_performance()
-print(f"Throughput: {perf['throughput_ops_s']/1e9:.2f} GOPS")
-# Output: Throughput: 19.20 GOPS
-
-# Advanced co-optimization
-class MockModel:
-    def __init__(self):
-        self.complexity = 1.0
-
-model = MockModel()
-optimizer = ModelOptimizer(model, accelerator)
 ```
 
-### 3. Quantum Leap Optimization
+**Define a custom architecture:**
 ```python
-from backend.codesign_playground.core.quantum_leap_optimizer import (
-    get_quantum_leap_optimizer, ScalingStrategy, QuantumLeapConfig
-)
+from codesign.architecture import NNArchitecture, Layer, LayerType
 
-# Configure quantum leap optimization
-config = QuantumLeapConfig(
-    strategy=ScalingStrategy.MASSIVE_PARALLEL,
-    target_scale_factor=100.0,
-    max_parallel_workers=1000
-)
-
-# Run breakthrough optimization
-optimizer = get_quantum_leap_optimizer(config)
-
-def objective_function(params):
-    return -(params['x']**2 + params['y']**2)  # Minimize
-
-search_space = {'x': (-5.0, 5.0), 'y': (-5.0, 5.0)}
-
-# Execute quantum leap optimization
-result = await optimizer.optimize_quantum_leap(objective_function, search_space)
-print(f"Scale Factor Achieved: {result.achieved_scale_factor:.2f}x")
-print(f"Breakthrough Indicators: {len(result.breakthrough_indicators)}")
+arch = NNArchitecture(name="my-net")
+arch.add_layer(Layer(
+    name="conv1",
+    layer_type=LayerType.CONV2D,
+    input_shape=(3, 224, 224),
+    output_shape=(64, 112, 112),
+    kernel_size=3, stride=2,
+))
+# ... add more layers
 ```
 
-### 4. Research Capabilities
+**Run Pareto-optimal co-design:**
 ```python
-from backend.codesign_playground.research.research_discovery import (
-    conduct_comprehensive_research_discovery
+from codesign import CoDesignOptimizer, PerformanceEstimator
+
+optimizer = CoDesignOptimizer(
+    estimator=PerformanceEstimator(),
+    arch_builder=lambda cfg: build_mobilenet_style(**cfg),
+    arch_configs=[{"width_mult": w, "resolution": r} for w in [0.5, 1.0] for r in [128, 224]],
+    hw_targets=[cloud_gpu(), edge_tpu(), mcu()],
 )
-from backend.codesign_playground.research.novel_algorithms import (
-    get_quantum_optimizer, AlgorithmType
-)
-
-# Comprehensive research discovery
-discovery_results = await conduct_comprehensive_research_discovery()
-print(f"Research gaps identified: {len(discovery_results['research_gaps'])}")
-print(f"Breakthrough opportunities: {len(discovery_results['breakthrough_opportunities'])}")
-
-# Novel algorithm optimization
-quantum_optimizer = get_quantum_optimizer()
-result = quantum_optimizer.optimize(objective_function, search_space)
-print(f"Quantum optimization fitness: {result.best_fitness:.4f}")
+points = optimizer.run()
+optimizer.print_pareto_table(points)
 ```
 
-### 5. Run Production Server
-```bash
-# Development mode
-python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+## Limitations
 
-# Production mode
-gunicorn backend.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
-```
+- Latency estimates assume idealized roofline (no batching, no pipeline effects).
+- The accuracy proxy is log(params) — not actual measured accuracy.
+- Hardware efficiency factor (default 50%) is a rough constant; real utilization varies.
+- Does not model memory hierarchy beyond a single SRAM/DRAM split.
 
----
+## License
 
-## 🧬 Research Breakthrough Features
-
-### Novel Algorithms Implemented
-1. **Quantum-Inspired Optimization** - Superposition-based design space exploration
-2. **Neuro-Evolutionary Architecture Search** - Speciation-based hardware evolution
-3. **Adaptive Swarm Intelligence** - Dynamic behavior optimization for hardware design
-4. **Quantum Annealing with Coherence** - Coherence preservation for global optimization
-5. **Reinforcement Learning Design** - Q-learning for hardware strategy discovery
-6. **Hybrid Multi-Objective** - Quantum-classical-neuromorphic fusion
-7. **Massive Parallel Processing** - 1000+ worker hyperscale optimization
-8. **Breakthrough Research Manager** - Automated research validation framework
-
-### Research Validation Results
-- **Statistical Significance**: p < 0.05 for major algorithm comparisons
-- **Effect Sizes**: Large effects (Cohen's d > 0.8) for breakthrough methods
-- **Reproducibility**: >0.7 scores across multiple independent runs
-- **Publication Ready**: Academic-quality documentation and validation
-
----
-
-## 🌍 Global-First Features
-
-### Internationalization (13 Languages)
-```python
-from backend.codesign_playground.global.internationalization import (
-    set_language, translate, SupportedLanguage
-)
-
-# Set language
-set_language(SupportedLanguage.JAPANESE)
-
-# Translate technical terms
-print(translate("optimization"))  # Output: 最適化
-print(translate("accelerator"))   # Output: アクセラレータ
-print(translate("neural_network")) # Output: ニューラルネットワーク
-```
-
-**Supported Languages**: English, Spanish, French, German, Japanese, Chinese (Simplified/Traditional), Korean, Portuguese, Italian, Russian, Arabic, Hindi
-
-### Global Compliance Framework
-```python
-from backend.codesign_playground.global.compliance import (
-    record_processing, DataCategory, ProcessingPurpose, LegalBasis,
-    ComplianceRegulation
-)
-
-# GDPR-compliant data processing
-processing_id = record_processing(
-    user_id="user_123",
-    data_category=DataCategory.USAGE_ANALYTICS,
-    purpose=ProcessingPurpose.PERFORMANCE_OPTIMIZATION,
-    legal_basis=LegalBasis.LEGITIMATE_INTERESTS,
-    regulations=[ComplianceRegulation.GDPR, ComplianceRegulation.CCPA]
-)
-```
-
-**Compliance Support**: GDPR (EU), CCPA (California), PDPA (Singapore), LGPD (Brazil), PIPEDA (Canada)
-
----
-
-## 📊 Performance & Validation
-
-### System Performance
-- **Compute Throughput**: 19.20 GOPS (1920% of 1.0 GOPS target)
-- **Parallelization**: Up to 1000 concurrent workers
-- **Memory Efficiency**: Advanced caching and optimization
-- **Fault Tolerance**: 96% reliability with circuit breaker patterns
-- **Energy Efficiency**: 0.5+ TOPS/Watt equivalent
-
-### Quality Gates Results
-✅ **Core Architecture Validation** - All modules load successfully  
-✅ **Basic Functionality** - Accelerator performance estimation working  
-✅ **Performance Benchmarks** - 19.20 GOPS >> 1.0 GOPS target exceeded  
-⚠️  **Security Validation** - Enhanced framework needed  
-✅ **Research Components** - Literature database and algorithms functional  
-
-**Overall Score**: 4/5 Quality Gates Passed (80% Success Rate) - Production Ready
-
----
-
-## 🔬 Research & Academic Impact
-
-### Literature Database
-- **5 Core Research Papers** indexed across major venues (ISCA, MICRO, FPGA)
-- **7 Research Areas** tracked with trend analysis
-- **15 Research Gaps** identified with breakthrough potential
-- **Automated Gap Analysis** with impact scoring and feasibility assessment
-
-### Comparative Study Framework
-```python
-from backend.codesign_playground.research.comparative_study_framework import (
-    get_comparative_study_engine, StudyType, EvaluationMetric
-)
-
-# Run comprehensive benchmarking study
-engine = get_comparative_study_engine()
-algorithms = {
-    "quantum_inspired": get_quantum_optimizer(),
-    "neural_evolution": get_neural_evolution(),
-    # ... more algorithms
-}
-
-study_result = await engine.conduct_comparative_study(
-    study_config, algorithms, benchmark_problems
-)
-```
-
-### Publication-Ready Research
-- **Breakthrough Report**: [RESEARCH_BREAKTHROUGH_REPORT.md](./RESEARCH_BREAKTHROUGH_REPORT.md)
-- **Statistical Validation**: Rigorous hypothesis testing framework
-- **Reproducible Results**: Multiple independent runs with confidence intervals
-- **Open Research**: Transparent methodology for community validation
-
----
-
-## 🛠️ API Documentation
-
-### Core Endpoints
-```bash
-# Accelerator Design & Optimization
-POST /api/v1/accelerators/design
-POST /api/v1/optimization/co-optimize
-
-# Quantum Leap Optimization  
-POST /api/v1/quantum-leap/optimize
-GET  /api/v1/quantum-leap/status/{id}
-
-# Research Capabilities
-POST /api/v1/research/breakthrough-study
-GET  /api/v1/research/literature-analysis
-POST /api/v1/research/comparative-study
-
-# Global Features
-GET  /api/v1/i18n/languages
-POST /api/v1/i18n/translate
-GET  /api/v1/compliance/status
-POST /api/v1/compliance/consent
-
-# System Health & Metrics
-GET  /health
-GET  /metrics
-GET  /ready
-```
-
-### Interactive Documentation
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-- **OpenAPI Spec**: http://localhost:8000/openapi.json
-
----
-
-## 🚀 Production Deployment
-
-### Quick Deployment
-```bash
-# Docker deployment
-docker build -t ai-codesign .
-docker run -p 8000:8000 -e QUANTUM_LEAP_ENABLED=true ai-codesign
-
-# Kubernetes deployment
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-kubectl apply -f k8s/ingress.yaml
-
-# Production configuration
-export ENVIRONMENT=production
-export QUANTUM_LEAP_ENABLED=true
-export GDPR_ENABLED=true
-export MAX_WORKERS=16
-```
-
-### Comprehensive Deployment Guide
-See [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) for complete production deployment instructions including:
-- System requirements and configuration
-- Docker and Kubernetes deployment
-- Security and compliance setup
-- Monitoring and observability
-- Performance optimization
-- Troubleshooting procedures
-
----
-
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) | Complete production deployment guide |
-| [RESEARCH_BREAKTHROUGH_REPORT.md](./RESEARCH_BREAKTHROUGH_REPORT.md) | Comprehensive research achievements report |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and design principles |
-| [API Reference](http://localhost:8000/docs) | Interactive API documentation |
-
-### Architecture Overview
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Frontend/CLI   │───▶│   FastAPI Core   │───▶│ Quantum Leap    │
-│                 │    │                  │    │ Optimizer       │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│ Research Engine │◀───│  Core Services   │───▶│ Global Services │
-│ • 8 Algorithms  │    │ • Accelerator    │    │ • i18n (13 lang)│
-│ • Literature DB │    │ • Optimizer      │    │ • Compliance    │
-│ • Benchmarking  │    │ • Monitoring     │    │ • Security      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
-
----
-
-## 🤝 Contributing
-
-We welcome contributions to advance the state-of-the-art in AI hardware co-design research!
-
-### Research Contributions
-- **Novel Algorithms**: Implement breakthrough optimization methods
-- **Benchmark Problems**: Add new evaluation scenarios
-- **Literature Analysis**: Expand the research database
-- **Validation Studies**: Contribute comparative analysis
-
-### Development Contributions
-- **Core Features**: Enhance accelerator design and optimization
-- **Global Features**: Improve internationalization and compliance
-- **Performance**: Optimize quantum leap scaling capabilities
-- **Documentation**: Improve research and deployment guides
-
----
-
-## 🏆 Recognition & Impact
-
-### Research Excellence
-- **Novel Algorithms**: 8 breakthrough methods with statistical validation
-- **Publication Quality**: Academic-standard research methodology
-- **Reproducible Research**: Open, transparent validation framework
-- **Global Impact**: Multi-language, multi-jurisdiction deployment ready
-
-### Industry Impact
-- **Production Performance**: 19.20 GOPS computational capability
-- **Quantum Leap Scaling**: 100x+ improvement potential demonstrated
-- **Global Deployment**: Enterprise-ready with compliance framework
-- **Open Innovation**: Framework for collaborative research advancement
-
-### Community Benefits
-- **Research Platform**: Foundation for breakthrough algorithm development
-- **Educational Resource**: Comprehensive learning framework
-- **Open Standards**: Benchmark suite for research community
-- **Global Accessibility**: Multi-language support for worldwide adoption
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-This project represents the successful autonomous execution of a complete Software Development Life Cycle (SDLC) with quantum leap capabilities, delivering breakthrough research results ready for immediate academic publication and industrial deployment.
-
----
-
-**🤖 Generated with [Claude Code](https://claude.ai/code) - Autonomous SDLC Execution v4.0**
-
-**Co-Authored-By: Claude <noreply@anthropic.com>**
-
----
-
-*✨ Ready for production deployment with 19.20 GOPS performance, 8 breakthrough algorithms, 13-language support, global compliance, and 80% quality gate success rate.*
+MIT
